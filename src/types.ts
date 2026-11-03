@@ -1,5 +1,5 @@
 /**
- * Shared type definitions for Khan Academy Timer.
+ * Shared type definitions for Timer for Khan Academy.
  *
  * Design rule (spec 5.3 / 7): the timer engine and the question-change decision
  * logic are pure TypeScript with no DOM and no `chrome.*` access, so that they

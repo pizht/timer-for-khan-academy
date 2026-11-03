@@ -31,7 +31,7 @@ export function localizeDom(root: ParentNode = document): void {
     const key = node.dataset['i18n'];
     if (!key) continue;
     if (!hasMessage(key)) {
-      console.warn('[Khan Timer] unknown i18n key in markup:', key);
+      console.warn('[Timer for Khan Academy] unknown i18n key in markup:', key);
       continue;
     }
     node.textContent = t(key);

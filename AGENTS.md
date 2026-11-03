@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for AI agents and new maintainers working on Khan Academy Timer.
+Guidance for AI agents and new maintainers working on Timer for Khan Academy.
 
 ## What this project is
 

@@ -20,7 +20,7 @@ function bootstrap(): void {
   const controller = new ContentController();
   controller.init().catch((error: unknown) => {
     // A failure here must be visible, not silent (spec 5.3).
-    console.warn('[Khan Timer] initialisation failed:', error);
+    console.warn('[Timer for Khan Academy] initialisation failed:', error);
   });
   window.addEventListener('pagehide', () => controller.dispose(), { once: true });
 }

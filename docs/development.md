@@ -1,4 +1,4 @@
-# Khan Academy Timer — Developer Guide
+# Timer for Khan Academy — Developer Guide
 
 A **per-question timer** for Khan Academy exercises and quizzes: it detects the question being
 solved and times it, with count-up / countdown, pause / resume / reset, an in-page floating panel

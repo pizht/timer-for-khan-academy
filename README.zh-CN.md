@@ -1,4 +1,4 @@
-# <img src="assets/logo.png" width="45" align="left"> Khan Academy Timer
+# <img src="assets/logo.png" width="45" align="left"> Timer for Khan Academy
 
 一个用于 **Chrome / Edge** 的扩展，为可汗学院（Khan Academy）的题目计时。
 通过 ZIP 手动安装。
@@ -42,9 +42,9 @@
 
 打开发布页面：
 
-**<https://github.com/pizht/Khan-Timer/releases/latest>**
+**<https://github.com/pizht/timer-for-khan-academy/releases/latest>**
 
-在 **Assets** 下点击名为 `khan-timer-<版本号>.zip` 的文件。
+在 **Assets** 下点击名为 `timer-for-khan-academy-<版本号>.zip` 的文件。
 
 > **不要**下载 "Source code (zip)" 或 "Source code (tar.gz)" —— 那是源码压缩包。
 
@@ -67,13 +67,13 @@
 2. 点击 **加载已解压的扩展**（Load unpacked）；
 3. 选择第 2 步的文件夹（含 `manifest.json` 的那个），确认。
 
-列表里会出现一张名为 **Khan Academy Timer** 的卡片。如果提示
+列表里会出现一张名为 **Timer for Khan Academy** 的卡片。如果提示
 *「Manifest file is missing or unreadable」*（清单文件缺失或无法读取），说明选错了文件夹，
 回到第 2 步。
 
 ### 5. 固定到工具栏（建议）
 
-点击地址栏右侧的拼图图标，把 **Khan Academy Timer** 固定到工具栏。
+点击地址栏右侧的拼图图标，把 **Timer for Khan Academy** 固定到工具栏。
 设置面板与实时状态都从这个图标打开。
 
 ### 6. 试一下
@@ -95,9 +95,9 @@ https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtractio
 
 ## 升级到新版本
 
-1. 在同一个[发布页面](https://github.com/pizht/Khan-Timer/releases/latest)下载新的 ZIP；
+1. 在同一个[发布页面](https://github.com/pizht/timer-for-khan-academy/releases/latest)下载新的 ZIP；
 2. 解压后把文件**覆盖到原来的文件夹**（全部替换），文件夹路径保持不变；
-3. 打开 `chrome://extensions` 或 `edge://extensions`，在 Khan Academy Timer 卡片上点击
+3. 打开 `chrome://extensions` 或 `edge://extensions`，在 Timer for Khan Academy 卡片上点击
    **重新加载**（↻）；
 4. 刷新可汗学院页面。
 
@@ -109,7 +109,7 @@ https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtractio
 ## 卸载
 
 1. 打开 `chrome://extensions` 或 `edge://extensions`；
-2. 在 Khan Academy Timer 卡片上点击**移除**并确认；
+2. 在 Timer for Khan Academy 卡片上点击**移除**并确认；
 3. 删掉你解压出来的文件夹。
 
 移除扩展会连同它保存的设置与历史记录一起从浏览器中删除。
@@ -230,7 +230,7 @@ https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtractio
 
 ## 反馈问题
 
-请在 **<https://github.com/pizht/Khan-Timer/issues>** 提交 issue，并附上：
+请在 **<https://github.com/pizht/timer-for-khan-academy/issues>** 提交 issue，并附上：
 
 1. 浏览器名称与版本；
 2. 弹出面板标题处显示的扩展版本；

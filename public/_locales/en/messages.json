@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Khan Academy Timer",
+    "message": "Timer for Khan Academy",
     "description": "Extension name shown in the browser UI and in the stores. A product name, so it is not translated."
   },
   "extDesc": {

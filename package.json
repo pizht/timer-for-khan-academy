@@ -1,8 +1,12 @@
 {
   "name": "khan-academy-timer",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Question timer overlay for Khan Academy exercises and quizzes. Microsoft Edge (Chromium), Manifest V3.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pizht/timer-for-khan-academy.git"
+  },
   "type": "module",
   "packageManager": "pnpm@12.11.2",
   "engines": {

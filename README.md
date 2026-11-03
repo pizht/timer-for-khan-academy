@@ -1,4 +1,4 @@
-# <img src="assets/logo.png" width="45" align="left"> Khan Academy Timer
+# <img src="assets/logo.png" width="45" align="left"> Timer for Khan Academy
 
 A **Chrome / Edge** extension that times Khan Academy questions. Installed manually from a ZIP
 file.
@@ -46,9 +46,9 @@ manually from the download on the Releases page.
 
 Open the releases page:
 
-**<https://github.com/pizht/Khan-Timer/releases/latest>**
+**<https://github.com/pizht/timer-for-khan-academy/releases/latest>**
 
-Under **Assets**, click the file named `khan-timer-<version>.zip`.
+Under **Assets**, click the file named `timer-for-khan-academy-<version>.zip`.
 
 > Do **not** download "Source code (zip)" or "Source code (tar.gz)" — those are the raw source files.
 
@@ -72,12 +72,12 @@ Type it into the address bar and press Enter.
 2. Click **Load unpacked**.
 3. Select the folder from step 2 (the one containing `manifest.json`) and confirm.
 
-A card named **Khan Academy Timer** appears in the list. If you instead get
+A card named **Timer for Khan Academy** appears in the list. If you instead get
 *"Manifest file is missing or unreadable"*, you selected the wrong folder — go back to step 2.
 
 ### 5. Pin it to the toolbar (recommended)
 
-Click the puzzle-piece icon next to the address bar and pin **Khan Academy Timer**. The icon is
+Click the puzzle-piece icon next to the address bar and pin **Timer for Khan Academy**. The icon is
 where you open the settings and see the current status.
 
 ### 6. Try it
@@ -100,11 +100,11 @@ A **Question timer** panel appears in the top-right corner of the page and start
 
 ## Updating to a new version
 
-1. Download the new ZIP from the same [releases page](https://github.com/pizht/Khan-Timer/releases/latest).
+1. Download the new ZIP from the same [releases page](https://github.com/pizht/timer-for-khan-academy/releases/latest).
 2. Unzip it and copy the files **over your existing folder**, replacing everything. Keep the folder
    path exactly the same.
 3. Open `chrome://extensions` or `edge://extensions` and click the **reload** icon (↻) on the
-   Khan Academy Timer card.
+   Timer for Khan Academy card.
 4. Refresh the Khan Academy tab.
 
 Your settings and your timing history are kept, because the extension is still loaded from the
@@ -117,7 +117,7 @@ same folder.
 ## Uninstalling
 
 1. Open `chrome://extensions` or `edge://extensions`.
-2. Click **Remove** on the Khan Academy Timer card and confirm.
+2. Click **Remove** on the Timer for Khan Academy card and confirm.
 3. Delete the folder you unzipped.
 
 Removing the extension also deletes its saved settings and timing history from the browser.
@@ -207,7 +207,7 @@ The bottom card of the popup, **History**, lists your most recent records: the q
 | The panel disappeared and the popup says *"No question identified"* | This is expected: at that moment the page does not say which question is on screen. The timer **pauses** instead of counting that time, and resumes by itself when the same question is identified again. The question is not lost — it still appears in the end-of-exercise card. If it never comes back, that page type is not supported yet. |
 | A question starts with time already on the clock | You are on a question you had open before, or you left the practice and came back — that is the *"Resume the previous time"* setting. Press **Reset question** to start from `0:00`, or turn the setting off. |
 | No beep when the countdown reaches zero | Browsers block sound until you interact with the page. Click anywhere on the page, then try again. |
-| The timer vanished after restarting the browser | A browser notice about developer-mode extensions may have disabled it. Open the extensions page, turn Khan Academy Timer back on, and choose *Keep*/*Cancel* the next time that notice appears. |
+| The timer vanished after restarting the browser | A browser notice about developer-mode extensions may have disabled it. Open the extensions page, turn Timer for Khan Academy back on, and choose *Keep*/*Cancel* the next time that notice appears. |
 | Settings and history are empty after an update | The extension was loaded from a different folder, so it is a different installation. Unzip updates over the *same* folder next time. |
 | The panel shows `Detection: weak signal` or question changes are missed | That page does not expose the progress marker the timer normally uses. Use **Reset question** when you move on manually, and report the page if you like. |
 | The summary card does not appear at the end | It appears only after the last question of the attempt (including any bonus question), and Khan Academy usually shows that screen only to signed-in users. |
@@ -248,7 +248,7 @@ The popup header shows `v<version>`, for example `v0.3.0`.
 
 ## Reporting a problem
 
-Open an issue at **<https://github.com/pizht/Khan-Timer/issues>** and include:
+Open an issue at **<https://github.com/pizht/timer-for-khan-academy/issues>** and include:
 
 1. your browser and its version,
 2. the extension version shown in the popup header,
