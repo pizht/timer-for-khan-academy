@@ -126,7 +126,7 @@ assertion is stale" (fix the assertion) before changing either.
 | `scripts/capture/` | Live-site capture + sanitisation tools. |
 | `public/` | `manifest.json`, popup, `_locales/`, generated icons. |
 | `assets/logo.png` | Source art for `pnpm run icons`. |
-| `README.md` | The **user** guide, English — the repository's front page: install from the release ZIP, settings, privacy, FAQ. |
+| `README.md` | The **user** guide, English — the repository's front page: install from the Chrome Web Store (or the release ZIP for Edge), settings, privacy, FAQ. |
 | `README.zh-CN.md` | The same user guide in Simplified Chinese; the two README files link to each other. |
 | `docs/development.md` | The **developer** guide: architecture and invariants, commands, verification layers, release process, permissions, troubleshooting. |
 | `docs/i18n.md` | i18n design notes and how to add another language. |

@@ -218,7 +218,7 @@ permissions. `verify-dist.mjs` treats this as a hard check.
 
 | Document | Reader | Content |
 |---|---|---|
-| [`README.md`](../README.md) | **users** | The user guide on the repo home page (English, the default entry point): downloading the ZIP from a release and importing it into Chrome / Edge, usage, settings, privacy, troubleshooting |
+| [`README.md`](../README.md) | **users** | The user guide on the repo home page (English, the default entry point): installing from the Chrome Web Store or manually from a release ZIP into Chrome / Edge, usage, settings, privacy, troubleshooting |
 | [`README.zh-CN.md`](../README.zh-CN.md) | **users** | The same user guide in Simplified Chinese; the two README files link to each other |
 | [`docs/i18n.md`](i18n.md) | maintainers | The i18n design, language resolution, and **the steps to add another language** |
 | [`AGENTS.md`](../AGENTS.md) | AI agents / maintainers | Must-read before changing a selector: how to capture the real DOM yourself instead of inferring it |

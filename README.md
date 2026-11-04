@@ -1,7 +1,7 @@
 # <img src="assets/logo.png" width="45" align="left"> Timer for Khan Academy
 
-A **Chrome / Edge** extension that times Khan Academy questions. It has been submitted to the
-Chrome Web Store and is under review; until it is listed, you install it manually from a ZIP file.
+A **Chrome / Edge** extension that times Khan Academy questions. Available in the Chrome Web Store,
+and also installable manually from a ZIP file for Edge and other Chromium browsers.
 
 All data is stored locally.
 
@@ -9,8 +9,7 @@ All data is stored locally.
 
 ---
 
-**Jump to:** [Release status](#release-status) · [Install](#install) ·
-[Update](#updating-to-a-new-version) · [Uninstall](#uninstalling) ·
+**Jump to:** [Install](#install) · [Update](#updating-to-a-new-version) · [Uninstall](#uninstalling) ·
 [Using it](#using-it) · [Settings](#settings) · [Privacy](#your-data-and-privacy) ·
 [Problems](#troubleshooting) · [FAQ](#faq)
 
@@ -38,18 +37,21 @@ progress or scores. It only watches which question is on screen and how long it 
 | Where it works | Pages on `khanacademy.org` — practice exercises and quizzes |
 | Khan Academy account | Not needed for the timer itself |
 
-## Release status
-
-The extension has been submitted to the Chrome Web Store and is currently under review.
-
-Until it becomes available in the store, you can install it manually using the instructions below.
-
 ## Install
 
-Until the listing goes live, install the extension manually from the download on the Releases page.
-The steps are the same in Chrome and Edge.
+### From the Chrome Web Store
 
-### 1. Download the ZIP
+The extension is published in the Chrome Web Store:
+
+**<https://chromewebstore.google.com/detail/timer-for-khan-academy/deacmbdliiaodgpinfjdkmfllcflikfp>**
+
+Click **Add to Chrome** and confirm. Chrome installs it and keeps it updated on its own.
+
+### Manually, from the ZIP
+
+Use this for Edge or another Chromium browser, or if you would rather not install from the store.
+
+#### 1. Download the ZIP
 
 Open the releases page:
 
@@ -59,12 +61,12 @@ Under **Assets**, click the file named `timer-for-khan-academy-<version>.zip`.
 
 > Do **not** download "Source code (zip)" or "Source code (tar.gz)" — those are the raw source files.
 
-### 2. Unzip it into a folder you will keep
+#### 2. Unzip it into a folder you will keep
 
 > **Keep this folder where it is.** The browser loads the extension from it every time it starts.
 > If you move or delete it, the timer stops working.
 
-### 3. Open the extensions page
+#### 3. Open the extensions page
 
 | Browser | Address |
 |---|---|
@@ -73,7 +75,7 @@ Under **Assets**, click the file named `timer-for-khan-academy-<version>.zip`.
 
 Type it into the address bar and press Enter.
 
-### 4. Load the extension
+#### 4. Load the extension
 
 1. Turn on **Developer mode** — top-right corner in Chrome, left sidebar in Edge.
 2. Click **Load unpacked**.
@@ -82,12 +84,12 @@ Type it into the address bar and press Enter.
 A card named **Timer for Khan Academy** appears in the list. If you instead get
 *"Manifest file is missing or unreadable"*, you selected the wrong folder — go back to step 2.
 
-### 5. Pin it to the toolbar (recommended)
+#### 5. Pin it to the toolbar (recommended)
 
 Click the puzzle-piece icon next to the address bar and pin **Timer for Khan Academy**. The icon is
 where you open the settings and see the current status.
 
-### 6. Try it
+#### 6. Try it
 
 Open any practice exercise, for example:
 
@@ -107,6 +109,11 @@ A **Question timer** panel appears in the top-right corner of the page and start
 
 ## Updating to a new version
 
+**Installed from the Chrome Web Store?** Chrome updates it automatically — there is nothing to
+download. To check right away, open `chrome://extensions` and click **Update**.
+
+**Installed manually?** Do this:
+
 1. Download the new ZIP from the same [releases page](https://github.com/pizht/timer-for-khan-academy/releases/latest).
 2. Unzip it and copy the files **over your existing folder**, replacing everything. Keep the folder
    path exactly the same.
@@ -122,6 +129,11 @@ same folder.
 > a new extension identity, so your settings and history start from scratch.
 
 ## Uninstalling
+
+**Installed from the Chrome Web Store?** Open `chrome://extensions`, click **Remove** on the
+Timer for Khan Academy card and confirm. There is no folder to delete.
+
+**Installed manually?**
 
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Click **Remove** on the Timer for Khan Academy card and confirm.
@@ -244,8 +256,8 @@ It tries to detect questions on any Khan Academy exercise or quiz page. Practice
 most thoroughly verified; unsupported pages will say so in the popup instead of pretending to work.
 
 **Does it work in Chrome and Edge at the same time?**
-Yes — install the same ZIP in each browser separately. Each browser keeps its own settings and
-history.
+Yes — install it in each browser separately: from the Chrome Web Store in Chrome, from the ZIP in
+Edge. Each browser keeps its own settings and history.
 
 **Does it work in Firefox, Safari, or on a phone or tablet?**
 No. It is built for Chromium-based desktop browsers (Chrome, Edge, and similar).

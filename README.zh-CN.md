@@ -1,7 +1,7 @@
 # <img src="assets/logo.png" width="45" align="left"> Timer for Khan Academy
 
 一个用于 **Chrome / Edge** 的扩展，为可汗学院（Khan Academy）的题目计时。
-已提交 Chrome 应用商店审核；上架前通过 ZIP 手动安装。
+已在 Chrome 应用商店上架；Edge 等其他 Chromium 浏览器可用 ZIP 手动安装。
 
 所有数据为本地储存。
 
@@ -9,8 +9,8 @@
 
 ---
 
-**快速跳转：** [发布状态](#发布状态) · [安装](#安装) · [升级](#升级到新版本) · [卸载](#卸载) ·
-[使用](#使用) · [设置](#设置) · [隐私](#你的数据与隐私) · [疑难解答](#疑难解答) · [常见问题](#常见问题)
+**快速跳转：** [安装](#安装) · [升级](#升级到新版本) · [卸载](#卸载) · [使用](#使用) ·
+[设置](#设置) · [隐私](#你的数据与隐私) · [疑难解答](#疑难解答) · [常见问题](#常见问题)
 
 ## 功能
 
@@ -34,17 +34,21 @@
 | 生效范围 | `khanacademy.org` 上的练习页与测验页 |
 | 可汗学院账号 | 计时器本身不需要登录 |
 
-## 发布状态
-
-本扩展已提交 Chrome 应用商店，目前正在审核中。
-
-在它上架之前，请按下面的说明手动安装。
-
 ## 安装
 
-商店页面上线之前，请从 Releases 页面下载后手动安装；Chrome 与 Edge 的步骤相同。
+### 从 Chrome 应用商店安装
 
-### 1. 下载 ZIP
+扩展已在 Chrome 应用商店上架：
+
+**<https://chromewebstore.google.com/detail/timer-for-khan-academy/deacmbdliiaodgpinfjdkmfllcflikfp>**
+
+点击 **添加至 Chrome**（Add to Chrome）并确认。Chrome 会自动保持扩展更新。
+
+### 从 ZIP 手动安装
+
+适用于 Edge 或其他 Chromium 浏览器，或你不想通过商店安装的情况。
+
+#### 1. 下载 ZIP
 
 打开发布页面：
 
@@ -54,11 +58,11 @@
 
 > **不要**下载 "Source code (zip)" 或 "Source code (tar.gz)" —— 那是源码压缩包。
 
-### 2. 解压到一个你不会删掉的文件夹
+#### 2. 解压到一个你不会删掉的文件夹
 
 > **请让这个文件夹留在原地。** 浏览器每次启动都从这里加载扩展；移动或删除它，计时器就失效了。
 
-### 3. 打开扩展管理页
+#### 3. 打开扩展管理页
 
 | 浏览器 | 地址 |
 |---|---|
@@ -67,7 +71,7 @@
 
 在地址栏输入后回车。
 
-### 4. 加载扩展
+#### 4. 加载扩展
 
 1. 打开 **开发者模式** —— Chrome 在右上角，Edge 在左侧栏；
 2. 点击 **加载已解压的扩展**（Load unpacked）；
@@ -77,12 +81,12 @@
 *「Manifest file is missing or unreadable」*（清单文件缺失或无法读取），说明选错了文件夹，
 回到第 2 步。
 
-### 5. 固定到工具栏（建议）
+#### 5. 固定到工具栏（建议）
 
 点击地址栏右侧的拼图图标，把 **Timer for Khan Academy** 固定到工具栏。
 设置面板与实时状态都从这个图标打开。
 
-### 6. 试一下
+#### 6. 试一下
 
 打开任意练习页，例如：
 
@@ -101,6 +105,11 @@ https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtractio
 
 ## 升级到新版本
 
+**从 Chrome 应用商店安装的：** Chrome 会自动更新，不需要手动下载。想立即检查的话，打开
+`chrome://extensions` 点击**更新**。
+
+**手动安装的：**
+
 1. 在同一个[发布页面](https://github.com/pizht/timer-for-khan-academy/releases/latest)下载新的 ZIP；
 2. 解压后把文件**覆盖到原来的文件夹**（全部替换），文件夹路径保持不变；
 3. 打开 `chrome://extensions` 或 `edge://extensions`，在 Timer for Khan Academy 卡片上点击
@@ -113,6 +122,11 @@ https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtractio
 > 跑两个计时器。另外，新文件夹意味着新的扩展身份，设置与历史记录会从零开始。
 
 ## 卸载
+
+**从 Chrome 应用商店安装的：** 打开 `chrome://extensions`，在 Timer for Khan Academy 卡片上
+点击**移除**并确认。这种方式没有文件夹需要删。
+
+**手动安装的：**
 
 1. 打开 `chrome://extensions` 或 `edge://extensions`；
 2. 在 Timer for Khan Academy 卡片上点击**移除**并确认；
@@ -226,7 +240,8 @@ https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtractio
 不支持的页面会在弹出面板里明说，而不会假装正常工作。
 
 **Chrome 和 Edge 能同时用吗？**
-可以 —— 同一个 ZIP 在两个浏览器里分别安装即可，各自的设置与历史记录互相独立。
+可以 —— 分别在两个浏览器里安装即可：Chrome 从应用商店装，Edge 用 ZIP 装；
+各自的设置与历史记录互相独立。
 
 **Firefox、Safari、手机或平板能用吗？**
 不能。它面向 Chromium 内核的桌面浏览器（Chrome、Edge 等）。
