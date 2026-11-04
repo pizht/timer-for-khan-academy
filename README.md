@@ -1,7 +1,7 @@
 # <img src="assets/logo.png" width="45" align="left"> Timer for Khan Academy
 
-A **Chrome / Edge** extension that times Khan Academy questions. Installed manually from a ZIP
-file.
+A **Chrome / Edge** extension that times Khan Academy questions. It has been submitted to the
+Chrome Web Store and is under review; until it is listed, you install it manually from a ZIP file.
 
 All data is stored locally.
 
@@ -9,7 +9,8 @@ All data is stored locally.
 
 ---
 
-**Jump to:** [Install](#install) · [Update](#updating-to-a-new-version) · [Uninstall](#uninstalling) ·
+**Jump to:** [Release status](#release-status) · [Install](#install) ·
+[Update](#updating-to-a-new-version) · [Uninstall](#uninstalling) ·
 [Using it](#using-it) · [Settings](#settings) · [Privacy](#your-data-and-privacy) ·
 [Problems](#troubleshooting) · [FAQ](#faq)
 
@@ -37,10 +38,16 @@ progress or scores. It only watches which question is on screen and how long it 
 | Where it works | Pages on `khanacademy.org` — practice exercises and quizzes |
 | Khan Academy account | Not needed for the timer itself |
 
+## Release status
+
+The extension has been submitted to the Chrome Web Store and is currently under review.
+
+Until it becomes available in the store, you can install it manually using the instructions below.
+
 ## Install
 
-The extension is **not** in the Chrome Web Store or the Edge Add-ons store, so you install it
-manually from the download on the Releases page.
+Until the listing goes live, install the extension manually from the download on the Releases page.
+The steps are the same in Chrome and Edge.
 
 ### 1. Download the ZIP
 
