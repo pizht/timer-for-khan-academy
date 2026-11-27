@@ -36,7 +36,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
+import { assertBrowserRunnable, browserEnv, resolveEdge } from './lib/browser.mjs';
 import { STORED_RECORDS_FN } from './lib/stored-records.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -500,8 +500,9 @@ async function main() {
       '--no-service-autorun',
       '--disable-features=Translate,MediaRouter',
       // The extension renders in the language the user chose (by default the
-      // browser's), and every label read below is the Chinese one: this flag is
-      // what makes the run deterministic instead of depending on the machine.
+      // browser's), and every label read below is the Chinese one: this flag
+      // (macOS / Windows) and `browserEnv` (Linux, which ignores the flag) are
+      // what make the run deterministic instead of depending on the machine.
       '--lang=zh-CN',
       `--user-data-dir=${profile}`,
       `--remote-debugging-port=${PORT}`,
@@ -510,7 +511,7 @@ async function main() {
       '--window-size=1440,1000',
       URL_ARG,
     ],
-    { stdio: ['ignore', 'ignore', 'ignore'] },
+    { stdio: ['ignore', 'ignore', 'ignore'], env: browserEnv('zh-CN') },
   );
 
   let cdp;
@@ -1227,7 +1228,10 @@ async function main() {
         const english = {
           label: label(),
           htmlLang: document.documentElement.lang,
-          modeOption: ((document.getElementById('defaultMode') || {}).selectedOptions || [{}])[0].textContent,
+          // The count-up option specifically, NOT the selected one: step 10b
+          // has already switched the mode to countdown, so the selected option
+          // never read "Count up" and this check could not pass.
+          modeOption: (document.querySelector('#defaultMode option[value="countup"]') || {}).textContent,
           storedLanguage: ((await chrome.storage.local.get('settings')).settings || {}).language,
         };
         sel.value = 'auto';
