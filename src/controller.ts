@@ -61,10 +61,18 @@ import {
   isQuestionFinished,
   isStartCardPresent,
   isSummaryPage,
+  readPage,
   readProgress,
   shouldLeaveSummary,
   readSubmissionOutcome,
 } from './site-profile.js';
+import {
+  NO_VIEW,
+  PageViewer,
+  ShadowComparison,
+  positionOfKey,
+  type DetectionView,
+} from './shadow.js';
 import type {
   ActiveRun,
   DetectionConfidence,
@@ -142,6 +150,9 @@ export class ContentController {
   private started = false;
   private disposed = false;
   private tickCount = 0;
+  /** `readPage` compared with this detector on every tick (see `shadow.ts`). */
+  private readonly shadow = new ShadowComparison();
+  private readonly pageViewer = new PageViewer();
 
   /** Serialised writer for the saved timing records. */
   private recordQueue: RecordQueue = createRecordQueue(null);
@@ -1083,6 +1094,8 @@ export class ContentController {
       pollTimerActive: this.diagnostics.pollTimerActive,
       pendingCandidate: this.diagnostics.pendingCandidate,
       tickCount: this.tickCount,
+      /** `readPage` vs this detector, for the replacement (see `shadow.ts`). */
+      shadow: this.shadow.stats(),
       disposed: this.disposed,
       visibility: document.visibilityState,
       hidden: document.hidden,
@@ -1116,7 +1129,26 @@ export class ContentController {
     // support attribute reflects reality even when nothing is changing.
     if (this.tickCount % 4 === 0) this.detector?.refreshDiagnostics();
     this.checkPageState(now);
+    this.shadow.observe(
+      this.detectorView(),
+      this.pageViewer.view(readPage(document, location.href)),
+      now,
+    );
     this.render();
+  }
+
+  /**
+   * What this detector currently believes is on screen, in the shape `readPage`
+   * is compared on. A question counts only while it is the one the panel would
+   * show: an engine that is identified, positioned and belongs to this page.
+   */
+  private detectorView(): DetectionView {
+    if (this.inSummary) return { screen: 'summary', index: null, total: null };
+    const engine = this.engine;
+    if (!engine || this.unidentified) return NO_VIEW;
+    if (engine.exerciseKey !== exerciseKeyFromUrl(location.href)) return NO_VIEW;
+    const position = positionOfKey(engine.questionKey);
+    return position ? { screen: 'question', ...position } : NO_VIEW;
   }
 
   private async checkpoint(now: number, force: boolean): Promise<void> {

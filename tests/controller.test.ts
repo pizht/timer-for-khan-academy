@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContentController } from '../src/controller.js';
 import { OVERLAY_HOST_ID } from '../src/question-detector.js';
+import type { ShadowStats } from '../src/shadow.js';
 import { RECORD_KEY_PREFIX, sessionKey } from '../src/storage.js';
 import { SUMMARY_HOST_ID } from '../src/summary-view.js';
 import { formatDuration } from '../src/timer-engine.js';
@@ -403,7 +404,25 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
+/**
+ * Shadow mode (step 2 of replacing the detector with `readPage`): in every
+ * scenario of this file, `readPage` runs next to the current detector and may
+ * disagree with it only for as long as the detector itself is allowed to lag -
+ * its 400 ms debounce plus 1200 ms cooldown, plus one 250 ms tick, rounded up.
+ * Measured when this was introduced: no scenario exceeded one tick.
+ */
+const SHADOW_TOLERANCE_MS = 2000;
+
 afterEach(() => {
+  const shadow = diagnostics()['shadow'] as ShadowStats | undefined;
+  const longest = shadow?.longest ?? null;
+  if (longest) {
+    expect(
+      longest.durationMs,
+      `readPage disagreed with the detector for ${longest.durationMs} ms: ` +
+        `detector=${JSON.stringify(longest.detector)} page=${JSON.stringify(longest.page)}`,
+    ).toBeLessThanOrEqual(SHADOW_TOLERANCE_MS);
+  }
   controller?.dispose();
   controller = null;
   vi.useRealTimers();

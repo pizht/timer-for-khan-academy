@@ -78,6 +78,11 @@ EDGE_PATH="/path/to/msedge" pnpm run verify:edge
 When no browser is found, the script fails **before** starting any process and lists every path it
 tried.
 
+`EDGE_PATH` may also point at a Chromium build: `verify:edge` passes against Chromium on Linux,
+including in a cloud session that has `khanacademy.org` allowed on its network. The browser is
+pinned to Chinese with `--lang=zh-CN`, which macOS and Windows honour and Linux ignores, so it is
+also launched with `LANGUAGE` / `LANG` set (`browserEnv` in `scripts/lib/browser.mjs`).
+
 ---
 
 ## Architecture and invariants
@@ -123,7 +128,8 @@ src/
 ├── content.ts             # content-script entry (no side effects; starts the controller)
 ├── controller.ts          # timing controller: detection events → timing / records / sessions / summary
 ├── question-detector.ts   # question detection: pure decision logic + DOM adapter
-├── site-profile.ts        # ★ every site selector and adaptation rule lives here
+├── site-profile.ts        # ★ every site selector and adaptation rule lives here, incl. readPage()
+├── shadow.ts              # readPage vs the current detector, compared on every tick (diagnostics)
 ├── timer-engine.ts        # count-up/countdown state machine (pure logic, injectable clock)
 ├── storage.ts             # settings, records, in-flight sessions, write queue
 ├── overlay.ts             # in-page floating panel (Shadow DOM)
@@ -135,7 +141,7 @@ src/
 public/                    # manifest.json, popup.html/css, _locales/, icons/ (copied wholesale at build time)
 scripts/                   # build + icon generation + the verification scripts
 scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
-tests/                     # vitest (11 files, three of them with fast-check property tests)
+tests/                     # vitest (12 files, three of them with fast-check property tests)
 docs/                      # this developer guide and the i18n notes (the user guide is README.md / README.zh-CN.md)
 assets/logo.png            # icon source art; pnpm run icons generates public/icons/ from it
 ```
@@ -163,7 +169,7 @@ with the `verify:*` commands.
 
 | Layer | Command | Current size | Coverage |
 |---|---|---|---|
-| Unit tests | `pnpm run test` | **311 cases / 11 files** | timer engine (including a fast-check model test), detection decisions and DOM adapter, `readPage` (every screen of a quiz / unit test / course challenge), controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
+| Unit tests | `pnpm run test` | **325 cases / 12 files** | timer engine (including a fast-check model test), detection decisions and DOM adapter, `readPage` (every screen of a quiz / unit test / course challenge) and its shadow comparison, controller (jsdom end to end, including practice switching and the summary row model; every scenario also checks readPage against the detector), storage and the write queue, summary row ordering, panel/popup, i18n |
 | Build check | `node scripts/verify-dist.mjs` | **61 checks** | manifest parses and every file it references exists, permission allowlist, content-script match scope, no network/dynamic-execution code in `dist/*.js`, icon sizes, `_locales` and every `__MSG_*` resolves |
 | Real browser | `pnpm run verify:edge`, `verify:startcard`, `verify:practice-switch` | end to end | loads `dist/` as an unpacked extension into real Edge and reads the panel's Shadow DOM and `chrome.storage.local` over CDP |
 
@@ -171,6 +177,14 @@ Scenarios that are hard to reproduce reliably in a real browser (for example "de
 pause → resume") have been rewritten as jsdom end-to-end cases where possible — see
 *pauses instead of resetting when the question region disappears and comes back* in
 `tests/controller.test.ts`. For the rest, follow the prompts printed by the three `verify:*` commands.
+
+**Shadow mode.** Detection is being moved from fingerprinting the question region to `readPage()`
+(`src/site-profile.ts`): one reading of the page's own markers per change, diffed against the last.
+Until the switch, the controller runs `readPage` next to the current detector on every tick.
+`src/shadow.ts` records how long the two disagree, and the result is published as `shadow` in the
+page's `data-khan-timer-diagnostics`. Every scenario in `tests/controller.test.ts` and both live
+checkpoints in `verify:edge` require the longest disagreement to stay within 2000 ms. That is the
+current detector's own allowed lag: 400 ms debounce + 1200 ms cooldown + one tick.
 
 **Property tests** (`tests/*.property.test.ts`, [fast-check](https://fast-check.dev/)) generate
 inputs instead of listing them:

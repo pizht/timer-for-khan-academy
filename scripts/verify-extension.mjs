@@ -32,7 +32,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -176,6 +176,27 @@ class Cdp {
 }
 
 /**
+ * Keep the page as it is right now, for a failure that could not be reproduced.
+ *
+ * Writes the full DOM and a screenshot to the gitignored `.tmp-caps/` (raw
+ * captures are never versioned, see AGENTS.md) and prints where. Read it with
+ * `scripts/capture/sanitize-snapshots.py` before drawing any conclusion.
+ */
+async function dumpPage(cdp, label) {
+  try {
+    const dir = path.join(ROOT, '.tmp-caps', 'verify-dumps');
+    await mkdir(dir, { recursive: true });
+    const stem = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${label}`);
+    await writeFile(`${stem}.html`, String(await cdp.evaluate('document.documentElement.outerHTML')));
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    await writeFile(`${stem}.png`, Buffer.from(shot.data, 'base64'));
+    console.log(`  page kept for diagnosis: ${path.relative(ROOT, stem)}.{html,png}`);
+  } catch (error) {
+    console.log(`  could not keep the page: ${error.message}`);
+  }
+}
+
+/**
  * Pin the interface language for this run.
  *
  * The extension renders in the language the learner chose (by default the
@@ -307,6 +328,35 @@ const ADVANCE_LABEL = `(() => {
   const b = document.querySelector('[data-testid="exercise-next-question"]');
   return b ? (b.textContent || '').replace(/\\s+/g, ' ').trim() : null;
 })()`;
+
+/**
+ * Shadow mode (step 2 of replacing the detector with `readPage`): the extension
+ * compares `readPage` with its current detector on every tick and publishes the
+ * longest disagreement in its diagnostics. Allowed: as long as the detector
+ * itself may lag - its 400 ms debounce plus 1200 ms cooldown, plus one tick,
+ * rounded up (the same bound `tests/controller.test.ts` holds every scenario to).
+ */
+const SHADOW_TOLERANCE_MS = 2000;
+
+async function checkShadow(cdp, where) {
+  const diag = await cdp
+    .evaluate(
+      `(() => { const h = document.getElementById('khan-academy-timer-host');
+         try { return h ? JSON.parse(h.getAttribute('data-khan-timer-diagnostics') || 'null') : null; }
+         catch { return null; } })()`,
+    )
+    .catch(() => null);
+  const shadow = diag?.shadow ?? null;
+  const longest = shadow?.longest ?? null;
+  console.log(`  shadow (${where}): ${JSON.stringify(shadow)}`);
+  check(
+    `readPage agrees with the detector (${where})`,
+    shadow !== null && shadow.checks > 0 && (longest === null || longest.durationMs <= SHADOW_TOLERANCE_MS),
+    shadow === null
+      ? 'no shadow diagnostics published'
+      : `checks=${shadow.checks} episodes=${shadow.episodes} longest=${longest ? `${longest.durationMs}ms detector=${JSON.stringify(longest.detector)} page=${JSON.stringify(longest.page)}` : 'none'}`,
+  );
+}
 
 /** Page-side view of the current question, for cross-checking the extension. */
 const PAGE_STATE = `(() => {
@@ -735,6 +785,11 @@ async function main() {
       wrongState?.state === 'incorrect',
       JSON.stringify(wrongState),
     );
+    // Seen in 2 of 5 runs and not reproduced in isolation (5 tries, with and
+    // without the extension): after this wrong answer on question 2 the answer
+    // form disappeared, the state stayed `incomplete`, and the wrong value
+    // submitted was question 1's sum + 7. Keep the page the next time it happens.
+    if (wrongState?.state !== 'incorrect') await dumpPage(cdp, 'wrong-answer-not-graded');
     await sleep(2500);
     const afterWrong = await cdp.evaluate(READ_PANEL);
     check(
@@ -1067,6 +1122,7 @@ async function main() {
         'no question is being timed here',
       );
     }
+    await checkShadow(cdp, 'exercise, start to summary');
 
     // 10. The extension's own popup page: real storage, real settings, real records.
     const extensionId = unpackedExtensionId(DIST);
@@ -1518,6 +1574,7 @@ async function main() {
           /进度/.test(quizPanel?.meta ?? ''),
           `meta=${quizPanel?.meta}`,
         );
+        await checkShadow(quizCdp, 'quiz, start card to first question');
       } catch (error) {
         check('quiz page could be checked', false, error.message);
       } finally {
