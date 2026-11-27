@@ -462,6 +462,29 @@ async function waitForKind(cdp, kind, timeoutMs = 30000) {
   return last;
 }
 
+/**
+ * Wait for the panel once a question is on screen.
+ *
+ * `waitForKind` returns on the first sample (every 600 ms) that shows the
+ * answer form, and the panel only appears once the extension has read the
+ * position and loaded the question's session from storage. Measured live, with
+ * the code before and after the detector rewrite alike: 138-170 ms after the
+ * question on a fresh load. A single sample can land in that gap, and both
+ * "the panel is timing" checks failed on the old code as well as the new.
+ * They now give the panel up to 3 s and report how long it took.
+ */
+async function waitForPanel(cdp, state, timeoutMs = 3000) {
+  if (!state?.question || state.panelVisible) return { ...state, panelWaitMs: 0 };
+  const started = Date.now();
+  let last = state;
+  while (Date.now() - started < timeoutMs) {
+    await sleep(100);
+    last = (await cdp.evaluate(PAGE_KIND).catch(() => null)) ?? last;
+    if (last?.panelVisible) return { ...last, panelWaitMs: Date.now() - started };
+  }
+  return { ...last, panelWaitMs: null };
+}
+
 /** Get past the "Ready to practice?" intro card if it is showing. */
 async function dismissStartCard(cdp) {
   const first = await cdp.evaluate(`!!document.querySelector('[data-testid="start-task-card-summary"]')`);
@@ -889,8 +912,9 @@ async function main() {
     if (state?.progress && state.cells > 0 && !String(state.progress).includes('-0-')) {
       state = await ensureFreshAttempt(cdp, 'A');
     }
+    state = await waitForPanel(cdp, state);
     check('A: a question is on screen and the panel is timing', Boolean(state?.question && state?.panelVisible),
-      `progress=${state?.progress} panel=${state?.panelTime}`);
+      `progress=${state?.progress} panel=${state?.panelTime} appeared after ${state?.panelWaitMs ?? '>3000'} ms`);
     const exerciseQuestions = state?.cells ?? 0;
     note(`practice A reports ${exerciseQuestions} questions`);
     const aAnsweredBefore = await answerCount(cdp, 2, 'A(before)', 4000);
@@ -920,9 +944,12 @@ async function main() {
     note(`B now at ${afterB?.progress} panel=${afterB?.panelTime}`);
 
     // ---- 3. back to practice A, finish it --------------------------------
-    const backState = SWITCH === 'link' ? await navigateByLink(cdp, URL_A, 'A(again)') : await navigate(cdp, URL_A, 'A(again)');
+    const backState = await waitForPanel(
+      cdp,
+      SWITCH === 'link' ? await navigateByLink(cdp, URL_A, 'A(again)') : await navigate(cdp, URL_A, 'A(again)'),
+    );
     check('A: the panel is timing again after coming back', backState?.panelVisible === true,
-      `progress=${backState?.progress} time=${backState?.panelTime}`);
+      `progress=${backState?.progress} time=${backState?.panelTime} appeared after ${backState?.panelWaitMs ?? '>3000'} ms`);
     const resumedFrom = parseDisplay(backState?.panelTime);
     note(`A resumed at ${backState?.panelTime} (${resumedFrom} ms on the clock)`);
 
