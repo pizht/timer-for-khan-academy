@@ -330,31 +330,47 @@ const ADVANCE_LABEL = `(() => {
 })()`;
 
 /**
- * Shadow comparison (see src/shadow.ts): the extension compares what the
- * controller concludes with what `readPage` concludes on its own, on every
- * tick, and publishes the longest disagreement in its diagnostics. The same
- * bound as `tests/controller.test.ts` (the controller's 700 ms end-screen
- * check plus 250 ms ticks, with room to spare; never more than 750 ms seen).
+ * The extension's conclusion must match the page, read independently here.
+ *
+ * The page is read straight from the DOM (distinct progress indices, the
+ * `-current` cell, the answer form) and compared with what the extension
+ * publishes in `data-khan-timer-diagnostics`: on a question, the question it is
+ * timing is exactly the one on screen and its clock is not frozen; on the end
+ * screen, it is in its summary state and timing nothing.
  */
-const SHADOW_TOLERANCE_MS = 2000;
-
-async function checkShadow(cdp, where) {
-  const diag = await cdp
+async function checkAgreesWithPage(cdp, where) {
+  const seen = await cdp
     .evaluate(
-      `(() => { const h = document.getElementById('khan-academy-timer-host');
-         try { return h ? JSON.parse(h.getAttribute('data-khan-timer-diagnostics') || 'null') : null; }
-         catch { return null; } })()`,
+      `(() => {
+         const host = document.getElementById('khan-academy-timer-host');
+         let diag = null;
+         try { diag = host ? JSON.parse(host.getAttribute('data-khan-timer-diagnostics') || 'null') : null; } catch {}
+         const cells = Array.from(document.querySelectorAll('[data-testid^="exercise-progress-"]'))
+           .map((el) => el.getAttribute('data-testid') || '');
+         const indices = new Set(cells.map((t) => (t.match(/^exercise-progress-(\\d+)-/) || [])[1]).filter(Boolean));
+         const current = cells.find((t) => t.endsWith('-current'));
+         const index = current ? Number((current.match(/^exercise-progress-(\\d+)-/) || [])[1]) : null;
+         const form = !!document.querySelector('form[name="answerform"]');
+         return {
+           question: form && index !== null ? 'id:progress:' + (index + 1) + ' of ' + indices.size : null,
+           summary: !form && cells.length === 0 && !!document.querySelector('.bibliotron-exercise'),
+           diag,
+         };
+       })()`,
     )
     .catch(() => null);
-  const shadow = diag?.shadow ?? null;
-  const longest = shadow?.longest ?? null;
-  console.log(`  shadow (${where}): ${JSON.stringify(shadow)}`);
+  const diag = seen?.diag ?? null;
+  let ok = false;
+  if (seen?.question) {
+    ok = diag?.engineQuestionKey === seen.question && diag?.autoPausedForIdentity === false;
+  } else if (seen?.summary) {
+    ok = diag?.flow?.summary === true && diag?.engineQuestionKey === null;
+  }
   check(
-    `readPage agrees with the detector (${where})`,
-    shadow !== null && shadow.checks > 0 && (longest === null || longest.durationMs <= SHADOW_TOLERANCE_MS),
-    shadow === null
-      ? 'no shadow diagnostics published'
-      : `checks=${shadow.checks} episodes=${shadow.episodes} longest=${longest ? `${longest.durationMs}ms detector=${JSON.stringify(longest.detector)} page=${JSON.stringify(longest.page)}` : 'none'}`,
+    `the extension agrees with the page (${where})`,
+    ok,
+    `page=${seen?.question ?? (seen?.summary ? 'summary' : 'other')} ` +
+      `extension=${JSON.stringify({ engine: diag?.engineQuestionKey, frozen: diag?.autoPausedForIdentity, flow: diag?.flow })}`,
   );
 }
 
@@ -1122,7 +1138,7 @@ async function main() {
         'no question is being timed here',
       );
     }
-    await checkShadow(cdp, 'exercise, start to summary');
+    await checkAgreesWithPage(cdp, 'exercise, at the summary');
 
     // 10. The extension's own popup page: real storage, real settings, real records.
     const extensionId = unpackedExtensionId(DIST);
@@ -1574,7 +1590,7 @@ async function main() {
           /进度/.test(quizPanel?.meta ?? ''),
           `meta=${quizPanel?.meta}`,
         );
-        await checkShadow(quizCdp, 'quiz, start card to first question');
+        await checkAgreesWithPage(quizCdp, 'quiz, first question');
       } catch (error) {
         check('quiz page could be checked', false, error.message);
       } finally {

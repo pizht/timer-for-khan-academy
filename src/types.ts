@@ -1,10 +1,10 @@
 /**
  * Shared type definitions for Timer for Khan Academy.
  *
- * Design rule (spec 5.3 / 7): the timer engine and the question-change decision
- * logic are pure TypeScript with no DOM and no `chrome.*` access, so that they
- * can be unit tested deterministically. DOM and extension APIs live behind
- * adapters in `question-detector.ts`, `overlay.ts`, `storage.ts`.
+ * Design rule (spec 5.3 / 7): the timer engine and the timing flow are pure
+ * TypeScript with no DOM and no `chrome.*` access, so that they can be unit
+ * tested deterministically. DOM and extension APIs live behind adapters in
+ * `page-watcher.ts`, `overlay.ts`, `storage.ts`.
  */
 
 /* ------------------------------------------------------------------ *
@@ -105,61 +105,6 @@ export interface TimerSerialized {
   /** Wall clock of the last checkpoint write, for diagnostics. */
   savedAt: number;
 }
-
-/* ------------------------------------------------------------------ *
- * Question detection
- * ------------------------------------------------------------------ */
-
-/** Which selector strategy produced the question region. */
-export type SelectorStrategyName = string;
-
-/** Raw, DOM-derived observations about the current question. */
-export interface QuestionSnapshot {
-  /** Observation timestamp (epoch ms). */
-  at: number;
-  /**
-   * Strongest available identity: a site-provided question id or a
-   * navigation/position signal. Null when none is trustworthy.
-   */
-  stableId: string | null;
-  /** Hash over the question stem and answer-widget shape. Null if unavailable. */
-  fingerprint: string | null;
-  /**
-   * Hash over the stem and answer-widget shape ONLY (no progress position),
-   * computed on every observation.
-   *
-   * It exists so a question can be recognised as the SAME question across an
-   * identity upgrade: on a real page load the question region appears before the
-   * progress marker does, so the first identity is a fingerprint and it becomes
-   * a progress id a moment later. Without this field that upgrade looks like a
-   * question change - which restarted the timer at zero and lost the time
-   * already spent (reproduced on khanacademy.org, see
-   * scripts/verify-practice-switch.mjs).
-   */
-  stemFingerprint: string | null;
-  /** Human-readable progress marker, e.g. "3 of 7". Diagnostics and grouping. */
-  progress: string | null;
-  /** Page URL at observation time. */
-  url: string;
-  /** True when a question region was actually located in the DOM. */
-  regionFound: boolean;
-  /** Which selector strategy matched, for the diagnostics panel. */
-  strategy: SelectorStrategyName | null;
-  /** Confidence implied by the signals above. */
-  confidence: DetectionConfidence;
-}
-
-/** Events emitted by the question detector. */
-export type DetectionEvent =
-  | { type: 'question-changed'; at: number; from: string | null; to: string; reason: string }
-  | { type: 'same-question'; at: number; key: string }
-  /**
-   * The same question, now identified more strongly (fingerprint -> progress
-   * id). The timer must keep running and only its identity is updated.
-   */
-  | { type: 'identity-upgraded'; at: number; from: string; to: string }
-  | { type: 'pending'; at: number; candidate: string }
-  | { type: 'uncertain'; at: number; reason: string };
 
 /* ------------------------------------------------------------------ *
  * Records and settings
@@ -321,13 +266,6 @@ export interface Settings {
    * same question resumes from the saved elapsed time (spec 2.2).
    */
   resumeAcrossReload: boolean;
-  /**
-   * Time a candidate question identity must remain stable before it is
-   * accepted as a real question change (spec 2.4 de-bounce).
-   */
-  detectionDebounceMs: number;
-  /** Minimum spacing between accepted question changes. */
-  detectionCooldownMs: number;
 }
 
 export interface StoredRecords {
@@ -336,26 +274,3 @@ export interface StoredRecords {
   records: QuestionRecord[];
 }
 
-/** Diagnostics surfaced to the popup so failures are visible, not silent. */
-export interface Diagnostics {
-  url: string;
-  exerciseKey: string;
-  detected: boolean;
-  strategy: SelectorStrategyName | null;
-  confidence: DetectionConfidence;
-  questionKey: string | null;
-  progress: string | null;
-  /** Raw progress testid, e.g. "exercise-progress-1-incomplete-current". */
-  progressRaw: string | null;
-  /** How many times the detector has evaluated the page this session. */
-  evaluateCount: number;
-  /** Wall clock of the most recent evaluation. */
-  lastEvaluateAt: number;
-  /** Why the most recent evaluation was triggered. */
-  lastReason: string;
-  /** Human-readable list of what the adapter tried. */
-  notes: string[];
-  lastEvent: string;
-  /** Regressions seen: selector strategies that failed to match. */
-  errors: string[];
-}

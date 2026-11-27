@@ -95,9 +95,9 @@ changing a selector, capture a fresh copy of the real DOM as described in
 
 | Invariant | Explanation | Main location |
 |---|---|---|
-| **Question identity = progress index** | Identity is the **index** in `exercise-progress-<index>-<state>`, never the state segment — the state changes on every answer submission, so including it would mean "answering a question counts as a question change". The site exposes no stable per-question id. | `question-detector.ts`, `site-profile.ts` |
-| **Detection reads the page's own markers and reports the difference** | `readPage()` turns the page into one small value: start card / question (position, state word, finished) / end screen / other. The detector re-reads it on every document change (one observer, throttled to 100 ms, plus a 700 ms poll for URL changes) and reports only what changed. A new position is committed on the reading that shows it: the marker is discrete and never flapped, so there is no de-bounce, and the question region is no longer fingerprinted. Verified on quizzes, unit tests and course challenges (form and position appear in the same 25 ms sample) and on exercises (≤ 71 ms apart). | `site-profile.ts`, `question-detector.ts` |
-| **The end screen needs history** | Three other frames have the end screen's exact structure: an exercise's loading frame, the torn-down frame of a practice being left, and an unfinished question dropped for a moment. A summary-shaped page counts as the end of a set only right after a **finished** question (Next shown, or `correct`) of the same exercise. | `controller.ts`, `shadow.ts` |
+| **Question identity = progress index** | Identity is the **index** in `exercise-progress-<index>-<state>`, never the state segment — the state changes on every answer submission, so including it would mean "answering a question counts as a question change". The site exposes no stable per-question id. | `site-profile.ts` |
+| **The page is read, the flow decides, the controller executes** | `readPage()` turns the page into one small value: start card / question (position, state word, finished) / end screen / other. `PageWatcher` re-reads it on every document change (one observer, throttled to 100 ms, plus a 700 ms poll for URL changes) and hands on only new readings. `step(state, input)` in `flow.ts` turns readings and clicks (Check, Skip, Start over, Pause, Reset) into effects (begin, complete, finalize, park, freeze, unfreeze, outcome, enter/leave summary); the controller only executes them, in order, on one chain. There is no de-bounce and no fingerprinting: the position is discrete and never flapped; form and position appear in the same 25 ms sample on tests and ≤ 71 ms apart on exercises. | `site-profile.ts`, `page-watcher.ts`, `flow.ts`, `controller.ts` |
+| **The end screen needs history** | Three other frames have the end screen's exact structure: an exercise's loading frame, the torn-down frame of a practice being left, and an unfinished question dropped for a moment. A summary-shaped page counts as the end of a set only right after a **finished** question (Next shown, or `correct`) of the same exercise. | `flow.ts` |
 | **Timing starts when the page reports the question number** | While the region is rendered but no position is known: no panel, no timing, no accumulated paused time. This removed the phantom `Paused 0:01` on question 1. | `controller.ts` |
 | **The panel only appears over a question being solved** | The host `#khan-academy-timer-host` mounts as `display:none` and is only shown by the render loop once a position is reported; it stays hidden on start cards, lesson pages and videos, and never flashes. | `overlay.ts`, `controller.ts` |
 | **Detection failure = pause, not reset** | When the question region or any identity signal is missing: hide the panel and **pause** the question (engine, accumulated time, first-submission timestamp and `runId` are all kept), then resume from the paused value when the same question returns; **a pause the learner asked for is never auto-resumed**. The unreadable stretch is not counted as time, but the question still appears in the end-of-exercise summary. | `controller.ts`, `timer-engine.ts` |
@@ -110,8 +110,8 @@ changing a selector, capture a fresh copy of the real DOM as described in
 | **i18n: `en.ts` is the source of truth for keys** | `MessageKey` is derived from `src/i18n/en.ts`; every other language is a `Record<MessageKey, string>`, so **a missing translation fails to compile**; `_locales/` only holds the extension name and description. | `src/i18n/`, [`docs/i18n.md`](i18n.md) |
 | **One source for the version number** | `scripts/build.mjs` writes `package.json`'s `version` into `dist/manifest.json`; the manifest only accepts plain dotted-numeric versions. | `scripts/build.mjs` |
 
-The `detectionDebounceMs` / `detectionCooldownMs` settings are still read from storage and passed
-to the detector, but they no longer have any effect (see the row above).
+Settings saved by earlier versions may still hold `detectionDebounceMs` / `detectionCooldownMs`;
+they are ignored when read.
 
 The design rationale for detection details (which container is the question region, why opening a
 hint does not reset the timer, why `Start over` counts as a new question, …) lives in the source
@@ -126,10 +126,10 @@ standard hook).
 ```text
 src/
 ├── content.ts             # content-script entry (no side effects; starts the controller)
-├── controller.ts          # timing controller: detection events → timing / records / sessions / summary
-├── question-detector.ts   # question detection: pure decision logic + DOM adapter
+├── controller.ts          # executes the flow's effects: timer engine, records, sessions, summary card
+├── flow.ts                # every timing decision: step(state, input) -> { state, effects } (pure)
+├── page-watcher.ts        # re-reads the page (readPage) on every change, hands on new readings
 ├── site-profile.ts        # ★ every site selector and adaptation rule lives here, incl. readPage()
-├── shadow.ts              # readPage vs the current detector, compared on every tick (diagnostics)
 ├── timer-engine.ts        # count-up/countdown state machine (pure logic, injectable clock)
 ├── storage.ts             # settings, records, in-flight sessions, write queue
 ├── overlay.ts             # in-page floating panel (Shadow DOM)
@@ -141,7 +141,7 @@ src/
 public/                    # manifest.json, popup.html/css, _locales/, icons/ (copied wholesale at build time)
 scripts/                   # build + icon generation + the verification scripts
 scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
-tests/                     # vitest (12 files, three of them with fast-check property tests)
+tests/                     # vitest (13 files, four of them with fast-check property tests)
 docs/                      # this developer guide and the i18n notes (the user guide is README.md / README.zh-CN.md)
 assets/logo.png            # icon source art; pnpm run icons generates public/icons/ from it
 ```
@@ -169,7 +169,7 @@ with the `verify:*` commands.
 
 | Layer | Command | Current size | Coverage |
 |---|---|---|---|
-| Unit tests | `pnpm run test` | **325 cases / 12 files** | timer engine (including a fast-check model test), detection decisions and DOM adapter, `readPage` (every screen of a quiz / unit test / course challenge) and its shadow comparison, controller (jsdom end to end, including practice switching and the summary row model; every scenario also checks readPage against the detector), storage and the write queue, summary row ordering, panel/popup, i18n |
+| Unit tests | `pnpm run test` | **288 cases / 13 files** | timer engine (including a fast-check model test), the timing flow (scenarios + invariants over random input sequences), the page watcher, `readPage` (every screen of a quiz / unit test / course challenge), site-profile helpers, controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
 | Build check | `node scripts/verify-dist.mjs` | **61 checks** | manifest parses and every file it references exists, permission allowlist, content-script match scope, no network/dynamic-execution code in `dist/*.js`, icon sizes, `_locales` and every `__MSG_*` resolves |
 | Real browser | `pnpm run verify:edge`, `verify:startcard`, `verify:practice-switch` | end to end | loads `dist/` as an unpacked extension into real Edge and reads the panel's Shadow DOM and `chrome.storage.local` over CDP |
 
@@ -178,17 +178,18 @@ pause → resume") have been rewritten as jsdom end-to-end cases where possible 
 *pauses instead of resetting when the question region disappears and comes back* in
 `tests/controller.test.ts`. For the rest, follow the prompts printed by the three `verify:*` commands.
 
-**Shadow comparison.** On every tick the controller compares what it has concluded (the question
-being timed, or the end screen) with what `readPage()` plus the end-screen history rule concludes on
-its own (`src/shadow.ts`). The result is published as `shadow` in the page's
-`data-khan-timer-diagnostics`. Every scenario in `tests/controller.test.ts` and both live checkpoints
-in `verify:edge` require the longest disagreement to stay within 2000 ms. The comparison was
-introduced to prove `readPage()` against the old fingerprint detector before replacing it. It now
-guards the controller's own state handling, which the next refactoring step rewrites.
+**The flow.** `tests/flow.test.ts` drives `step()` with example scenarios and with random sequences
+of readings, clicks and panel actions. It rebuilds what the controller would be doing from the
+effects alone and checks the invariants: one question timed at a time, the summary only right after
+a finished question of the same practice, a question on screen always being the one timed. Live,
+`verify:edge` checks at two points that the extension's published state agrees with the page as
+read straight from the DOM.
 
-**Property tests** (`tests/*.property.test.ts`, [fast-check](https://fast-check.dev/)) generate
-inputs instead of listing them:
+**Property tests** ([fast-check](https://fast-check.dev/)) generate inputs instead of listing them:
 
+- `flow.test.ts` - see "The flow" above.
+- `read-page.test.ts` reads every combination of page markers and checks a question is reported
+  exactly when the page shows both a form and a position.
 - `timer-engine.property.test.ts` runs random sequences of time passing, pauses, resets, mode
   changes, submissions, ticks and reloads, and checks the engine against a naive model after every
   step.

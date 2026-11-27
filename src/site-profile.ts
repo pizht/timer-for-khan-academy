@@ -34,7 +34,7 @@ import type { FirstSubmissionOutcome } from './types.js';
  * selectors went with that approach. The facts behind them explain why
  * content was never a usable identity: [VER] opening hints grew the answer
  * form's text from ~3.5 KB to ~23 KB (kept as a regression test in
- * tests/question-detector.test.ts), and [VER] `content-panel-wrapper` grows a
+ * tests/page-watcher.test.ts), and [VER] `content-panel-wrapper` grows a
  * "Related content" sidebar after an answer. Neither moves the progress
  * position, which is why the position is the identity.
  */

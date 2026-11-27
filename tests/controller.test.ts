@@ -22,8 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContentController } from '../src/controller.js';
-import { OVERLAY_HOST_ID } from '../src/question-detector.js';
-import type { ShadowStats } from '../src/shadow.js';
+import { OVERLAY_HOST_ID } from '../src/overlay.js';
 import { RECORD_KEY_PREFIX, sessionKey } from '../src/storage.js';
 import { SUMMARY_HOST_ID } from '../src/summary-view.js';
 import { formatDuration } from '../src/timer-engine.js';
@@ -404,26 +403,7 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
-/**
- * Shadow comparison (see src/shadow.ts): in every scenario of this file, what
- * the controller concludes may disagree with what `readPage` concludes on its
- * own only briefly. The controller looks for the end screen on its own 700 ms
- * check and both are sampled on a 250 ms tick; 2000 ms leaves room for that.
- * Measured: no scenario exceeded one tick, before or after the detector was
- * rebuilt on `readPage`.
- */
-const SHADOW_TOLERANCE_MS = 2000;
-
 afterEach(() => {
-  const shadow = diagnostics()['shadow'] as ShadowStats | undefined;
-  const longest = shadow?.longest ?? null;
-  if (longest) {
-    expect(
-      longest.durationMs,
-      `readPage disagreed with the detector for ${longest.durationMs} ms: ` +
-        `detector=${JSON.stringify(longest.detector)} page=${JSON.stringify(longest.page)}`,
-    ).toBeLessThanOrEqual(SHADOW_TOLERANCE_MS);
-  }
   controller?.dispose();
   controller = null;
   vi.useRealTimers();
@@ -1041,7 +1021,7 @@ describe('a question region that carries no position yet', () => {
     const session = savedSession(data, EXERCISE_A);
     expect(session['questionKey']).toBe('id:progress:1 of 4');
     expect(session['pausedMs']).toBe(0);
-    // Questions are no longer fingerprinted (see src/question-detector.ts): the
+    // Questions are no longer fingerprinted (see src/page-watcher.ts): the
     // position the page reports is the identity, so the session carries none.
     expect(session['stemFingerprint']).toBeNull();
   });

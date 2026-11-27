@@ -46,8 +46,6 @@ export const DEFAULT_SETTINGS: Settings = {
   summaryCollapsed: false,
   overlayPosition: { anchor: 'top-right', x: 16, y: 96 },
   resumeAcrossReload: true,
-  detectionDebounceMs: 400,
-  detectionCooldownMs: 1200,
 };
 
 /** Storage key for the in-flight session of one exercise/quiz. */
@@ -100,12 +98,6 @@ export function sanitizeSettings(raw: unknown): Settings {
     summaryCollapsed: toBoolean(source['summaryCollapsed'], DEFAULT_SETTINGS.summaryCollapsed),
     overlayPosition: sanitizePosition(anchor),
     resumeAcrossReload: toBoolean(source['resumeAcrossReload'], DEFAULT_SETTINGS.resumeAcrossReload),
-    detectionDebounceMs: Math.round(
-      clampNumber(source['detectionDebounceMs'], 100, 5000, DEFAULT_SETTINGS.detectionDebounceMs),
-    ),
-    detectionCooldownMs: Math.round(
-      clampNumber(source['detectionCooldownMs'], 0, 10000, DEFAULT_SETTINGS.detectionCooldownMs),
-    ),
   };
 }
 
