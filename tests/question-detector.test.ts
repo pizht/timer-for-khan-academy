@@ -772,6 +772,27 @@ describe('site-profile: readProgress / progressLabel', () => {
     expect(progressLabel(null)).toBeNull();
   });
 
+  it('REGRESSION: counts questions, not cells, when the bar is rendered twice', () => {
+    // Structure observed live on a 10-question unit test from question 2 on:
+    // the same bar twice in the footer, once inside a "Show all exercise
+    // progress" link and once in `progress-wrapper`, `-current` in both.
+    // Counting cells read "3 of 20" while question 1 had read "1 of 10".
+    const bar = Array.from({ length: 10 }, (_, i) => {
+      const state = i < 2 ? 'incorrect' : 'incomplete';
+      const testid = `exercise-progress-${i}-${state}${i === 2 ? '-current' : ''}`;
+      return `<div><div data-testid="${testid}" role="img"></div></div>`;
+    }).join('');
+    const copy = `<div><span aria-label="3 of 10 problems"><span>3 of 10</span></span><div>${bar}</div></div>`;
+    document.body.innerHTML = `
+      <div data-testid="content-library-footer">
+        <a title="Show all exercise progress" href="javascript: void 0">${copy}</a>
+        <div data-testid="progress-wrapper">${copy}</div>
+      </div>`;
+    const progress = readProgress(document);
+    expect(progress).toMatchObject({ index: 2, total: 10, state: 'incomplete' });
+    expect(progressLabel(progress)).toBe('3 of 10');
+  });
+
   it('labels a lone progress cell without a total', () => {
     document.body.innerHTML = khanDom({ progressTotal: 1, progressIndex: 0 });
     expect(progressLabel(readProgress(document))).toBe('1 of 1');

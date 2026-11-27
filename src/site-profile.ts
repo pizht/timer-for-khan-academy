@@ -265,18 +265,29 @@ export interface ProgressInfo {
 export function readProgress(doc: ParentNode): ProgressInfo | null {
   const cells = Array.from(doc.querySelectorAll('[data-testid^="exercise-progress-"]'));
   if (cells.length === 0) return null;
+  // [VER] The total is the number of DISTINCT question indices, not the number
+  // of cells: from its second question on, a unit test renders the progress
+  // bar TWICE inside `content-library-footer` - once inside a "Show all
+  // exercise progress" link and once inside `[data-testid="progress-wrapper"]`,
+  // both with a "3 of 10" label and identical cells, `-current` included.
+  // Counting cells read "3 of 20" on a 10-question test (question 1 had read
+  // "1 of 10"), so one test changed its own identity half-way. Observed live
+  // on an Algebra 1 unit test; quizzes (5) and course challenges (30) render
+  // one copy.
+  const indices = new Set<number>();
+  let current: ProgressInfo | null = null;
   for (const cell of cells) {
     const raw = cell.getAttribute('data-testid') ?? '';
-    if (!raw.endsWith('-current')) continue;
-    const match = raw.match(/^exercise-progress-(\d+)-(.+?)(?:-current)?$/);
+    const match = raw.match(/^exercise-progress-(\d+)-(.+?)(-current)?$/);
     if (!match) continue;
-    return {
-      index: Number(match[1]),
-      total: cells.length,
-      state: match[2] ?? 'unknown',
-      raw,
-    };  }
-  return null;
+    const index = Number(match[1]);
+    indices.add(index);
+    if (match[3] && current === null) {
+      current = { index, total: null, state: match[2] ?? 'unknown', raw };
+    }
+  }
+  if (current === null) return null;
+  return { ...current, total: indices.size };
 }
 
 /**
