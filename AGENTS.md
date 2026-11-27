@@ -50,7 +50,7 @@ hints render *inside* that region, whether the progress marker's state segment
 changes when an answer is submitted, and whether a start card leaves a stale
 question region behind. All of those were established by observation, and
 several of them are counter-intuitive — see the regression block in
-`tests/question-detector.test.ts`.
+`tests/page-watcher.test.ts`.
 
 If a page type has not been observed, the correct outcome is to leave it
 **unverified** — the extension degrades honestly and says it did not recognise

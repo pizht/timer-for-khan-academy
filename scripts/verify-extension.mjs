@@ -32,11 +32,12 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
+import { assertBrowserRunnable, browserEnv, resolveEdge } from './lib/browser.mjs';
+import { STORED_RECORDS_FN } from './lib/stored-records.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -175,6 +176,27 @@ class Cdp {
 }
 
 /**
+ * Keep the page as it is right now, for a failure that could not be reproduced.
+ *
+ * Writes the full DOM and a screenshot to the gitignored `.tmp-caps/` (raw
+ * captures are never versioned, see AGENTS.md) and prints where. Read it with
+ * `scripts/capture/sanitize-snapshots.py` before drawing any conclusion.
+ */
+async function dumpPage(cdp, label) {
+  try {
+    const dir = path.join(ROOT, '.tmp-caps', 'verify-dumps');
+    await mkdir(dir, { recursive: true });
+    const stem = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${label}`);
+    await writeFile(`${stem}.html`, String(await cdp.evaluate('document.documentElement.outerHTML')));
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
+    await writeFile(`${stem}.png`, Buffer.from(shot.data, 'base64'));
+    console.log(`  page kept for diagnosis: ${path.relative(ROOT, stem)}.{html,png}`);
+  } catch (error) {
+    console.log(`  could not keep the page: ${error.message}`);
+  }
+}
+
+/**
  * Pin the interface language for this run.
  *
  * The extension renders in the language the learner chose (by default the
@@ -306,6 +328,51 @@ const ADVANCE_LABEL = `(() => {
   const b = document.querySelector('[data-testid="exercise-next-question"]');
   return b ? (b.textContent || '').replace(/\\s+/g, ' ').trim() : null;
 })()`;
+
+/**
+ * The extension's conclusion must match the page, read independently here.
+ *
+ * The page is read straight from the DOM (distinct progress indices, the
+ * `-current` cell, the answer form) and compared with what the extension
+ * publishes in `data-khan-timer-diagnostics`: on a question, the question it is
+ * timing is exactly the one on screen and its clock is not frozen; on the end
+ * screen, it is in its summary state and timing nothing.
+ */
+async function checkAgreesWithPage(cdp, where) {
+  const seen = await cdp
+    .evaluate(
+      `(() => {
+         const host = document.getElementById('khan-academy-timer-host');
+         let diag = null;
+         try { diag = host ? JSON.parse(host.getAttribute('data-khan-timer-diagnostics') || 'null') : null; } catch {}
+         const cells = Array.from(document.querySelectorAll('[data-testid^="exercise-progress-"]'))
+           .map((el) => el.getAttribute('data-testid') || '');
+         const indices = new Set(cells.map((t) => (t.match(/^exercise-progress-(\\d+)-/) || [])[1]).filter(Boolean));
+         const current = cells.find((t) => t.endsWith('-current'));
+         const index = current ? Number((current.match(/^exercise-progress-(\\d+)-/) || [])[1]) : null;
+         const form = !!document.querySelector('form[name="answerform"]');
+         return {
+           question: form && index !== null ? 'id:progress:' + (index + 1) + ' of ' + indices.size : null,
+           summary: !form && cells.length === 0 && !!document.querySelector('.bibliotron-exercise'),
+           diag,
+         };
+       })()`,
+    )
+    .catch(() => null);
+  const diag = seen?.diag ?? null;
+  let ok = false;
+  if (seen?.question) {
+    ok = diag?.engineQuestionKey === seen.question && diag?.autoPausedForIdentity === false;
+  } else if (seen?.summary) {
+    ok = diag?.flow?.summary === true && diag?.engineQuestionKey === null;
+  }
+  check(
+    `the extension agrees with the page (${where})`,
+    ok,
+    `page=${seen?.question ?? (seen?.summary ? 'summary' : 'other')} ` +
+      `extension=${JSON.stringify({ engine: diag?.engineQuestionKey, frozen: diag?.autoPausedForIdentity, flow: diag?.flow })}`,
+  );
+}
 
 /** Page-side view of the current question, for cross-checking the extension. */
 const PAGE_STATE = `(() => {
@@ -499,8 +566,9 @@ async function main() {
       '--no-service-autorun',
       '--disable-features=Translate,MediaRouter',
       // The extension renders in the language the user chose (by default the
-      // browser's), and every label read below is the Chinese one: this flag is
-      // what makes the run deterministic instead of depending on the machine.
+      // browser's), and every label read below is the Chinese one: this flag
+      // (macOS / Windows) and `browserEnv` (Linux, which ignores the flag) are
+      // what make the run deterministic instead of depending on the machine.
       '--lang=zh-CN',
       `--user-data-dir=${profile}`,
       `--remote-debugging-port=${PORT}`,
@@ -509,7 +577,7 @@ async function main() {
       '--window-size=1440,1000',
       URL_ARG,
     ],
-    { stdio: ['ignore', 'ignore', 'ignore'] },
+    { stdio: ['ignore', 'ignore', 'ignore'], env: browserEnv('zh-CN') },
   );
 
   let cdp;
@@ -733,6 +801,11 @@ async function main() {
       wrongState?.state === 'incorrect',
       JSON.stringify(wrongState),
     );
+    // Seen in 2 of 5 runs and not reproduced in isolation (5 tries, with and
+    // without the extension): after this wrong answer on question 2 the answer
+    // form disappeared, the state stayed `incomplete`, and the wrong value
+    // submitted was question 1's sum + 7. Keep the page the next time it happens.
+    if (wrongState?.state !== 'incorrect') await dumpPage(cdp, 'wrong-answer-not-graded');
     await sleep(2500);
     const afterWrong = await cdp.evaluate(READ_PANEL);
     check(
@@ -1065,6 +1138,7 @@ async function main() {
         'no question is being timed here',
       );
     }
+    await checkAgreesWithPage(cdp, 'exercise, at the summary');
 
     // 10. The extension's own popup page: real storage, real settings, real records.
     const extensionId = unpackedExtensionId(DIST);
@@ -1077,14 +1151,14 @@ async function main() {
         return {
           hasChromeStorage: typeof chrome !== 'undefined' && !!chrome.storage,
           settings: all.settings || null,
-          recordCount: (all.records && all.records.records ? all.records.records.length : 0),
+          recordCount: (${STORED_RECORDS_FN})(all).length,
           renderedStatus: (document.getElementById('status-text') || {}).textContent || null,
           renderedRecordCount: (document.getElementById('record-count') || {}).textContent || null,
           modeSelect: !!document.getElementById('defaultMode'),
           limitInput: !!document.getElementById('countdownLimitSeconds'),
           soundToggle: !!document.getElementById('soundEnabled'),
           clearButton: !!document.getElementById('clear-records'),
-          records: (all.records && all.records.records ? all.records.records : []).map((r) => ({
+          records: (${STORED_RECORDS_FN})(all).map((r) => ({
             runId: r.runId,
             questionIndex: r.questionIndex,
             durationMs: r.durationMs,
@@ -1226,7 +1300,10 @@ async function main() {
         const english = {
           label: label(),
           htmlLang: document.documentElement.lang,
-          modeOption: ((document.getElementById('defaultMode') || {}).selectedOptions || [{}])[0].textContent,
+          // The count-up option specifically, NOT the selected one: step 10b
+          // has already switched the mode to countdown, so the selected option
+          // never read "Count up" and this check could not pass.
+          modeOption: (document.querySelector('#defaultMode option[value="countup"]') || {}).textContent,
           storedLanguage: ((await chrome.storage.local.get('settings')).settings || {}).language,
         };
         sel.value = 'auto';
@@ -1374,7 +1451,7 @@ async function main() {
         document.getElementById('clear-records').click();
         await new Promise((r) => setTimeout(r, 800));
         const all = await chrome.storage.local.get(null);
-        return { recordCount: (all.records && all.records.records ? all.records.records.length : 0),
+        return { recordCount: (${STORED_RECORDS_FN})(all).length,
                  rendered: (document.getElementById('record-count') || {}).textContent };
       })()`);
       check(
@@ -1513,6 +1590,7 @@ async function main() {
           /进度/.test(quizPanel?.meta ?? ''),
           `meta=${quizPanel?.meta}`,
         );
+        await checkAgreesWithPage(quizCdp, 'quiz, first question');
       } catch (error) {
         check('quiz page could be checked', false, error.message);
       } finally {

@@ -22,8 +22,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContentController } from '../src/controller.js';
-import { OVERLAY_HOST_ID } from '../src/question-detector.js';
-import { sessionKey } from '../src/storage.js';
+import { OVERLAY_HOST_ID } from '../src/overlay.js';
+import { RECORD_KEY_PREFIX, sessionKey } from '../src/storage.js';
 import { SUMMARY_HOST_ID } from '../src/summary-view.js';
 import { formatDuration } from '../src/timer-engine.js';
 import { t } from '../src/i18n/index.js';
@@ -247,9 +247,12 @@ function savedSession(data: Record<string, unknown>, exerciseKey: string): Recor
   return (data[sessionKey(exerciseKey)] ?? {}) as Record<string, unknown>;
 }
 
+/** Stored records, oldest first: one `rec:` key per record (see `RECORD_KEY_PREFIX`). */
 function savedRecords(data: Record<string, unknown>): Array<Record<string, unknown>> {
-  return ((data['records'] as { records?: Array<Record<string, unknown>> } | undefined)?.records ??
-    []) as Array<Record<string, unknown>>;
+  return Object.keys(data)
+    .filter((key) => key.startsWith(RECORD_KEY_PREFIX))
+    .sort()
+    .map((key) => data[key] as Record<string, unknown>);
 }
 
 /** The panel's own Pause/Resume control, as the learner sees its label. */
@@ -1018,7 +1021,9 @@ describe('a question region that carries no position yet', () => {
     const session = savedSession(data, EXERCISE_A);
     expect(session['questionKey']).toBe('id:progress:1 of 4');
     expect(session['pausedMs']).toBe(0);
-    expect(typeof session['stemFingerprint']).toBe('string');
+    // Questions are no longer fingerprinted (see src/page-watcher.ts): the
+    // position the page reports is the identity, so the session carries none.
+    expect(session['stemFingerprint']).toBeNull();
   });
 
   it('resumes the accumulated time across a reload, without billing the load', async () => {

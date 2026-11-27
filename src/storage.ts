@@ -14,7 +14,6 @@ import type {
   LanguageSetting,
   QuestionRecord,
   Settings,
-  StoredRecords,
   TimerSerialized,
 } from './types.js';
 import { isLocale } from './i18n/index.js';
@@ -47,8 +46,6 @@ export const DEFAULT_SETTINGS: Settings = {
   summaryCollapsed: false,
   overlayPosition: { anchor: 'top-right', x: 16, y: 96 },
   resumeAcrossReload: true,
-  detectionDebounceMs: 400,
-  detectionCooldownMs: 1200,
 };
 
 /** Storage key for the in-flight session of one exercise/quiz. */
@@ -101,12 +98,6 @@ export function sanitizeSettings(raw: unknown): Settings {
     summaryCollapsed: toBoolean(source['summaryCollapsed'], DEFAULT_SETTINGS.summaryCollapsed),
     overlayPosition: sanitizePosition(anchor),
     resumeAcrossReload: toBoolean(source['resumeAcrossReload'], DEFAULT_SETTINGS.resumeAcrossReload),
-    detectionDebounceMs: Math.round(
-      clampNumber(source['detectionDebounceMs'], 100, 5000, DEFAULT_SETTINGS.detectionDebounceMs),
-    ),
-    detectionCooldownMs: Math.round(
-      clampNumber(source['detectionCooldownMs'], 0, 10000, DEFAULT_SETTINGS.detectionCooldownMs),
-    ),
   };
 }
 
@@ -237,44 +228,112 @@ export function stretchKey(record: QuestionRecord): string {
   return `${record.exerciseKey}\u0000${record.questionKey}\u0000${record.startedAt}`;
 }
 
+/**
+ * Records are stored ONE KEY PER RECORD (`rec:<written-at>:<seq>:<id>`), not as
+ * one shared list.
+ *
+ * Every tab runs its own content script, and the popup is another context, so
+ * a shared list would be read-modify-written by several writers that cannot
+ * coordinate: two tabs finishing a question at the same moment would both
+ * read the old list and the second write would drop the first record, and a
+ * tab writing just as the popup cleared the history would write the cleared
+ * records back. With one key per record a writer only ever creates its own key
+ * and removes keys, so neither can happen whatever order the calls land in
+ * (`tests/storage.property.test.ts` explores those orders).
+ *
+ * The key sorts in write order: written-at is zero-padded epoch ms, and `seq`
+ * breaks ties between writes of one context in the same millisecond.
+ *
+ * `RECORDS_KEY` is the shared list written by earlier versions. It is
+ * still read (oldest first), never rewritten, and removed by `clearRecords` or
+ * once enough newer records shadow it completely.
+ */
+export const RECORD_KEY_PREFIX = 'rec:';
+
+let recordSeq = 0;
+
+export function recordStorageKey(record: QuestionRecord, writtenAt: number): string {
+  recordSeq = (recordSeq + 1) % 1_000_000;
+  const at = String(Math.max(0, Math.floor(writtenAt))).padStart(15, '0');
+  return `${RECORD_KEY_PREFIX}${at}:${String(recordSeq).padStart(6, '0')}:${record.id}`;
+}
+
+interface StoredRecordEntries {
+  /** Legacy shared list from earlier versions, if still present. */
+  legacy: unknown[];
+  /** Per-record keys, oldest first. */
+  keys: string[];
+  values: unknown[];
+}
+
+async function readRecordEntries(area: StorageArea): Promise<StoredRecordEntries> {
+  const all = await area.get(null);
+  const legacyRaw = all[RECORDS_KEY];
+  const legacy =
+    isRecord(legacyRaw) && Array.isArray(legacyRaw['records']) ? legacyRaw['records'] : [];
+  const keys = Object.keys(all)
+    .filter((key) => key.startsWith(RECORD_KEY_PREFIX))
+    .sort();
+  return { legacy, keys, values: keys.map((key) => all[key]) };
+}
+
+function recordsFromEntries(entries: StoredRecordEntries): QuestionRecord[] {
+  return sanitizeRecords({ version: 1, records: [...entries.legacy, ...entries.values] }).slice(
+    -MAX_RECORDS,
+  );
+}
+
 export async function loadRecords(area: StorageArea | null): Promise<QuestionRecord[]> {
   if (!area) return [];
   try {
-    const got = await area.get(RECORDS_KEY);
-    return sanitizeRecords(got[RECORDS_KEY]);
+    return recordsFromEntries(await readRecordEntries(area));
   } catch {
     return [];
   }
 }
 
 /**
- * Append one record, keeping only the newest `MAX_RECORDS`.
- * Returns the resulting list, or null when the write failed.
+ * Store one record, keeping only the newest `MAX_RECORDS`.
+ * Returns the resulting list as this writer sees it, or null when the write
+ * failed.
  *
  * A stretch of a question is stored once: a record that repeats one already
  * stored (same practice, same question, same start - see `stretchKey`) is the
- * same stretch timed once, so it is not appended a second time. That is what
+ * same stretch timed once, so it is not stored a second time. That is what
  * keeps a question answered and then left on screen from being counted twice by
  * the end-of-exercise card, whatever the learner does to the page in between.
+ * (Two tabs racing to store the same stretch can both pass this check; the copy
+ * is folded away on read by `sanitizeRecords`.)
  */
 export async function addRecord(
   area: StorageArea | null,
   record: QuestionRecord,
+  now: number = Date.now(),
 ): Promise<QuestionRecord[] | null> {
   if (!area) return null;
   try {
-    const existing = await loadRecords(area);
-    const key = stretchKey(record);
-    if (existing.some((stored) => stretchKey(stored) === key)) return existing;
-    const next = [...existing, record].slice(-MAX_RECORDS);
-    await area.set({ [RECORDS_KEY]: { version: 1, records: next } satisfies StoredRecords });
-    return next;
+    const entries = await readRecordEntries(area);
+    const existing = recordsFromEntries(entries);
+    const stretch = stretchKey(record);
+    if (existing.some((stored) => stretchKey(stored) === stretch)) return existing;
+
+    await area.set({ [recordStorageKey(record, now)]: record });
+
+    // Cap: drop the oldest per-record keys, and the legacy list once the newer
+    // records alone fill the cap (it is then never shown). Removing is safe to
+    // race: it never writes anything back.
+    const overflow = entries.keys.length + 1 - MAX_RECORDS;
+    const stale = overflow > 0 ? entries.keys.slice(0, overflow) : [];
+    if (entries.legacy.length > 0 && entries.keys.length + 1 >= MAX_RECORDS) stale.push(RECORDS_KEY);
+    if (stale.length > 0) await area.remove(stale).catch(() => undefined);
+
+    return [...existing, record].slice(-MAX_RECORDS);
   } catch {
     return null;
   }
 }
 
-/** Serialised writer for the shared `records` list. */
+/** Serialised writer for this context's records. */
 export interface RecordQueue {
   /** Append one record; resolves with the resulting list, or null on failure. */
   add(record: QuestionRecord): Promise<QuestionRecord[] | null>;
@@ -283,15 +342,15 @@ export interface RecordQueue {
 }
 
 /**
- * Create the single serialised writer for the `records` list.
+ * Create the single serialised writer for this context's records.
  *
- * `addRecord` is a read-modify-write (`loadRecords` -> append -> `set`) and
- * `chrome.storage` offers no transaction: two overlapping calls both read the
- * old list and the second `set` then drops the first record. That is exactly how
- * a per-question row can disappear from the end-of-exercise card, and the writes
- * that overlap in practice are the ones fired without being awaited - e.g.
- * flushing the held record of a question when the learner leaves a practice for
- * another one. One queue for every writer makes a torn write impossible.
+ * Records no longer share one key (see `RECORD_KEY_PREFIX`), so overlapping
+ * writes cannot drop each other. The queue is still what keeps one context's
+ * writes in the order they were asked for - the end-of-exercise card lists
+ * questions in capture order - and what makes the "this stretch is already
+ * stored" check in `addRecord` exact within a tab: the writes that overlap in
+ * practice are the ones fired without being awaited, e.g. flushing the held
+ * record of a question when the learner leaves a practice for another one.
  *
  * `flush()` exists so a reader (the end-of-exercise card) can be certain the
  * records it is about to load include every write that has already been asked
@@ -316,7 +375,10 @@ export function createRecordQueue(area: StorageArea | null): RecordQueue {
 export async function clearRecords(area: StorageArea | null): Promise<boolean> {
   if (!area) return false;
   try {
-    await area.remove(RECORDS_KEY);
+    // Only removes - never writes a list back - so a tab storing a record at
+    // the same moment cannot bring the cleared ones back.
+    const { keys } = await readRecordEntries(area);
+    await area.remove([RECORDS_KEY, ...keys]);
     return true;
   } catch {
     return false;
@@ -581,6 +643,7 @@ export function sanitizeSession(raw: unknown): TimerSerialized | null {
       raw['firstSubmissionOutcome'] === 'unknown'
         ? raw['firstSubmissionOutcome']
         : null,
+    wasPaused: toBoolean(raw['wasPaused'], false),
     savedAt,
   };
 }

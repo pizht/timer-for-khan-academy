@@ -111,3 +111,20 @@ export function resolveEdge() {
 export function assertBrowserRunnable() {
   resolveEdge();
 }
+
+/**
+ * The environment to launch the browser with, so its UI language is `locale`
+ * on every platform.
+ *
+ * `--lang=<locale>` is honoured by Edge / Chromium on macOS and Windows, but
+ * IGNORED on Linux, where the browser takes its language from `LANGUAGE` /
+ * `LANG` instead. Observed running `verify:edge` against Chromium on Linux:
+ * with `--lang=zh-CN` alone, `navigator.language` was English, so once a check
+ * set the extension back to "follow the browser" every later assertion on a
+ * Chinese label failed. Setting both covers every platform.
+ */
+export function browserEnv(locale) {
+  const posix = locale.replace('-', '_');
+  const base = posix.split('_')[0];
+  return { ...process.env, LANGUAGE: `${posix}:${base}`, LANG: `${posix}.UTF-8` };
+}

@@ -78,6 +78,11 @@ EDGE_PATH="/path/to/msedge" pnpm run verify:edge
 When no browser is found, the script fails **before** starting any process and lists every path it
 tried.
 
+`EDGE_PATH` may also point at a Chromium build: `verify:edge` passes against Chromium on Linux,
+including in a cloud session that has `khanacademy.org` allowed on its network. The browser is
+pinned to Chinese with `--lang=zh-CN`, which macOS and Windows honour and Linux ignores, so it is
+also launched with `LANGUAGE` / `LANG` set (`browserEnv` in `scripts/lib/browser.mjs`).
+
 ---
 
 ## Architecture and invariants
@@ -90,8 +95,9 @@ changing a selector, capture a fresh copy of the real DOM as described in
 
 | Invariant | Explanation | Main location |
 |---|---|---|
-| **Question identity = progress index** | Identity is the **index** in `exercise-progress-<index>-<state>`, never the state segment — the state changes on every answer submission, so including it would mean "answering a question counts as a question change". The site exposes no stable per-question id. | `question-detector.ts`, `site-profile.ts` |
-| **An identity upgrade is not a question change** | On load the question region appears first (text fingerprint only) and the progress marker ~20–190 ms later. That is an **identity upgrade of the same question** and must preserve the engine and the session, otherwise every question would restart from zero a second after loading. | `question-detector.ts` |
+| **Question identity = progress index** | Identity is the **index** in `exercise-progress-<index>-<state>`, never the state segment — the state changes on every answer submission, so including it would mean "answering a question counts as a question change". The site exposes no stable per-question id. | `site-profile.ts` |
+| **The page is read, the flow decides, the controller executes** | `readPage()` turns the page into one small value: start card / question (position, state word, finished) / end screen / other. `PageWatcher` re-reads it on every document change (one observer, throttled to 100 ms, plus a 700 ms poll for URL changes) and hands on only new readings. `step(state, input)` in `flow.ts` turns readings and clicks (Check, Skip, Start over, Pause, Reset) into effects (begin, complete, finalize, park, freeze, unfreeze, outcome, enter/leave summary); the controller only executes them, in order, on one chain. There is no de-bounce and no fingerprinting: the position is discrete and never flapped; form and position appear in the same 25 ms sample on tests and ≤ 71 ms apart on exercises. | `site-profile.ts`, `page-watcher.ts`, `flow.ts`, `controller.ts` |
+| **The end screen needs history** | Three other frames have the end screen's exact structure: an exercise's loading frame, the torn-down frame of a practice being left, and an unfinished question dropped for a moment. A summary-shaped page counts as the end of a set only right after a **finished** question (Next shown, or `correct`) of the same exercise. | `flow.ts` |
 | **Timing starts when the page reports the question number** | While the region is rendered but no position is known: no panel, no timing, no accumulated paused time. This removed the phantom `Paused 0:01` on question 1. | `controller.ts` |
 | **The panel only appears over a question being solved** | The host `#khan-academy-timer-host` mounts as `display:none` and is only shown by the render loop once a position is reported; it stays hidden on start cards, lesson pages and videos, and never flashes. | `overlay.ts`, `controller.ts` |
 | **Detection failure = pause, not reset** | When the question region or any identity signal is missing: hide the panel and **pause** the question (engine, accumulated time, first-submission timestamp and `runId` are all kept), then resume from the paused value when the same question returns; **a pause the learner asked for is never auto-resumed**. The unreadable stretch is not counted as time, but the question still appears in the end-of-exercise summary. | `controller.ts`, `timer-engine.ts` |
@@ -99,14 +105,13 @@ changing a selector, capture a fresh copy of the real DOM as described in
 | **Time semantics** | Elapsed time is always derived from timestamp differences, never from timer ticks (background tabs and post-sleep wake-ups stay correct). The clock **freezes** while the page is closed or the learner is away from the practice; `session:<practice path>` is stored per practice with a 12-hour TTL and only resumes when both the practice and the question match. | `timer-engine.ts`, `storage.ts` |
 | **A practice switch in the SPA invalidates the old identity immediately** | Any address change invalidates detection state: the first question of a new practice must be a new question even if the progress index is identical, otherwise the old practice's readout keeps climbing. | `controller.ts` |
 | **The summary card reads through three layers** | `exerciseKey` (which set of questions) → `attempt:<practice path>` (the current attempt window, only advanced once the summary screen was really seen) → `runId`. Rows are ordered by **question number**; a question number with no data keeps its row and is tagged `No data` rather than pulling the next question's time up into it; bonus questions sort after the numbered ones. | `summary-view.ts`, `storage.ts` |
-| **Record writes are serialised** | `chrome.storage` has no transactions, so concurrent "read → append → write back" cycles overwrite each other (a missing row on the summary card). All writes go through one queue and readers `flush()` it first. | `storage.ts` |
+| **One storage key per record; nobody rewrites a shared list** | `chrome.storage` has no transactions, and every tab plus the popup is a separate writer, so a shared "read → append → write back" list loses records when two tabs finish a question together, and a tab can write back records the popup just cleared. Each record is stored under its own `rec:<written-at>:<seq>:<id>` key. Writers only create their own key or remove keys, and readers sort the keys. Within one tab, writes still go through one queue (capture order, exact "already stored" check), and readers `flush()` it first. The shared `records` list from earlier versions is read first, never rewritten, and removed by Clear or once newer records fill the cap. `tests/storage.property.test.ts` explores the interleavings. | `storage.ts` |
 | **One stretch of a question is one record** | A *stretch* is one continuous timing of one question, identified by practice + question + the instant its clock started (`stretchKey`). An answered question keeps its record **held** so the card can include the last question of the exercise, and leaving the page writes it out — but that question stays on screen until the learner advances, so a tab switch, a reload or a detour through another practice used to write another copy of the same stretch: the card then added the copies up (1:51 read as 12:58) and printed one row per copy of the bonus question (seven "Bonus" rows for one bonus question). The controller does not record a question whose stretch is already stored, and storage drops such a copy both on write and on read — the read side also repairs lists an older version already wrote. Two genuine visits to one question keep two starts and their row still adds up. | `storage.ts`, `controller.ts`, `summary-view.ts` |
 | **i18n: `en.ts` is the source of truth for keys** | `MessageKey` is derived from `src/i18n/en.ts`; every other language is a `Record<MessageKey, string>`, so **a missing translation fails to compile**; `_locales/` only holds the extension name and description. | `src/i18n/`, [`docs/i18n.md`](i18n.md) |
 | **One source for the version number** | `scripts/build.mjs` writes `package.json`'s `version` into `dist/manifest.json`; the manifest only accepts plain dotted-numeric versions. | `scripts/build.mjs` |
 
-Debounce and cooldown defaults (overridable in settings, not exposed in the popup): a new identity
-must stay stable for **400 ms** and be **≥ 1200 ms** after the last accepted change; once a candidate
-appears, the detector schedules one deferred re-check.
+Settings saved by earlier versions may still hold `detectionDebounceMs` / `detectionCooldownMs`;
+they are ignored when read.
 
 The design rationale for detection details (which container is the question region, why opening a
 hint does not reset the timer, why `Start over` counts as a new question, …) lives in the source
@@ -121,9 +126,10 @@ standard hook).
 ```text
 src/
 ├── content.ts             # content-script entry (no side effects; starts the controller)
-├── controller.ts          # timing controller: detection events → timing / records / sessions / summary
-├── question-detector.ts   # question detection: pure decision logic + DOM adapter
-├── site-profile.ts        # ★ every site selector and adaptation rule lives here
+├── controller.ts          # executes the flow's effects: timer engine, records, sessions, summary card
+├── flow.ts                # every timing decision: step(state, input) -> { state, effects } (pure)
+├── page-watcher.ts        # re-reads the page (readPage) on every change, hands on new readings
+├── site-profile.ts        # ★ every site selector and adaptation rule lives here, incl. readPage()
 ├── timer-engine.ts        # count-up/countdown state machine (pure logic, injectable clock)
 ├── storage.ts             # settings, records, in-flight sessions, write queue
 ├── overlay.ts             # in-page floating panel (Shadow DOM)
@@ -131,11 +137,11 @@ src/
 ├── popup.ts               # extension popup logic
 ├── i18n/                  # all UI copy: en.ts source of truth + zh-CN.ts translation + t()/localizeDom()
 ├── sound.ts               # countdown tone (synthesised with Web Audio, no audio files)
-├── types.ts / util.ts     # shared types / fingerprint hashing and helpers
+├── types.ts / util.ts     # shared types / small helpers
 public/                    # manifest.json, popup.html/css, _locales/, icons/ (copied wholesale at build time)
 scripts/                   # build + icon generation + the verification scripts
 scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
-tests/                     # vitest (8 files)
+tests/                     # vitest (13 files, four of them with fast-check property tests)
 docs/                      # this developer guide and the i18n notes (the user guide is README.md / README.zh-CN.md)
 assets/logo.png            # icon source art; pnpm run icons generates public/icons/ from it
 ```
@@ -163,7 +169,7 @@ with the `verify:*` commands.
 
 | Layer | Command | Current size | Coverage |
 |---|---|---|---|
-| Unit tests | `pnpm run test` | **271 cases / 8 files** | timer engine, detection decisions and DOM adapter, controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
+| Unit tests | `pnpm run test` | **288 cases / 13 files** | timer engine (including a fast-check model test), the timing flow (scenarios + invariants over random input sequences), the page watcher, `readPage` (every screen of a quiz / unit test / course challenge), site-profile helpers, controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
 | Build check | `node scripts/verify-dist.mjs` | **61 checks** | manifest parses and every file it references exists, permission allowlist, content-script match scope, no network/dynamic-execution code in `dist/*.js`, icon sizes, `_locales` and every `__MSG_*` resolves |
 | Real browser | `pnpm run verify:edge`, `verify:startcard`, `verify:practice-switch` | end to end | loads `dist/` as an unpacked extension into real Edge and reads the panel's Shadow DOM and `chrome.storage.local` over CDP |
 
@@ -171,6 +177,30 @@ Scenarios that are hard to reproduce reliably in a real browser (for example "de
 pause → resume") have been rewritten as jsdom end-to-end cases where possible — see
 *pauses instead of resetting when the question region disappears and comes back* in
 `tests/controller.test.ts`. For the rest, follow the prompts printed by the three `verify:*` commands.
+
+**The flow.** `tests/flow.test.ts` drives `step()` with example scenarios and with random sequences
+of readings, clicks and panel actions. It rebuilds what the controller would be doing from the
+effects alone and checks the invariants: one question timed at a time, the summary only right after
+a finished question of the same practice, a question on screen always being the one timed. Live,
+`verify:edge` checks at two points that the extension's published state agrees with the page as
+read straight from the DOM.
+
+**Property tests** ([fast-check](https://fast-check.dev/)) generate inputs instead of listing them:
+
+- `flow.test.ts` - see "The flow" above.
+- `read-page.test.ts` reads every combination of page markers and checks a question is reported
+  exactly when the page shows both a form and a position.
+- `timer-engine.property.test.ts` runs random sequences of time passing, pauses, resets, mode
+  changes, submissions, ticks and reloads, and checks the engine against a naive model after every
+  step.
+- `storage.property.test.ts` puts every `chrome.storage` call under `fc.scheduler()`, so each run
+  lands the calls of one tab, two tabs, or a tab and the popup in a different order. It also feeds
+  arbitrary junk to every `sanitize*` function.
+
+Runs are random, so a failure prints a `seed` and `path` plus the shrunk counterexample. Pass
+`{ seed, path }` as options to that `fc.assert` to replay exactly that case. A test marked
+`it.fails` pins a **known bug** that the properties found. It goes red once the bug is fixed; then
+turn it into a plain `it`.
 
 Workflows:
 

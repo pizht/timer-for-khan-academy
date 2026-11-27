@@ -10,7 +10,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { OverlayView, type OverlayState } from '../src/overlay.js';
-import { OVERLAY_HOST_ID } from '../src/question-detector.js';
+import { OVERLAY_HOST_ID } from '../src/overlay.js';
 import { DEFAULT_SETTINGS } from '../src/storage.js';
 import { setLocale, t } from '../src/i18n/index.js';
 import type { Settings } from '../src/types.js';

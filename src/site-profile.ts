@@ -27,6 +27,18 @@
 
 import type { FirstSubmissionOutcome } from './types.js';
 
+/**
+ * The page is read through `readPage` (end of this file), from markers the page
+ * maintains itself. The question region used to be fingerprinted instead (stem
+ * text, answer-widget shape, hint and feedback subtrees removed); those
+ * selectors went with that approach. The facts behind them explain why
+ * content was never a usable identity: [VER] opening hints grew the answer
+ * form's text from ~3.5 KB to ~23 KB (kept as a regression test in
+ * tests/page-watcher.test.ts), and [VER] `content-panel-wrapper` grows a
+ * "Related content" sidebar after an answer. Neither moves the progress
+ * position, which is why the position is the identity.
+ */
+
 /** A named selector strategy. The `name` appears in diagnostic output. */
 export interface SelectorStrategy {
   /** Stable identifier shown in the popup's diagnostics list. */
@@ -37,141 +49,10 @@ export interface SelectorStrategy {
 const first = (selector: string) => (root: ParentNode): Element | null =>
   root.querySelector(selector);
 
-/**
- * The question region: the subtree whose content defines "the current
- * question". Everything hashed out here is stable across answering.
- */
-export const QUESTION_REGION: SelectorStrategy[] = [
-  // [OBS][VER] Perseus renders the whole question, including every answer
-  // widget, inside a form with this name. Its text was byte-identical before
-  // and after submitting an answer.
-  { name: 'perseus-answerform', select: first('form[name="answerform"]') },
-  // [OBS] The framework wrapper around the renderer. Stable across answering;
-  // also matches when the answer form itself is not rendered.
-  { name: 'perseus-framework', select: first('.framework-perseus') },
-  // [OBS] The responsive renderer root. Last resort: narrower than the
-  // framework, so it may miss widgets rendered outside the renderer.
-  { name: 'perseus-renderer', select: first('.perseus-renderer') },
-];
-
-/**
- * Narrower stem lookup inside the region. When none matches, the whole
- * region (minus excluded subtrees) is used as the stem.
- */
-export const QUESTION_STEM: SelectorStrategy[] = [
-  // [OBS] The responsive renderer holds the full question content. On the
-  // captured page its text was exactly the stem ("Add.608+251") and was
-  // byte-identical before and after an answer was submitted.
-  { name: 'perseus-renderer-root', select: first('.perseus-renderer') },
-  // [OBS] Fallback: Perseus tags each question paragraph with its index.
-  { name: 'perseus-paragraph-index', select: first('[data-perseus-paragraph-index]') },
-];
-
-/**
- * Subtrees removed from the region before it is fingerprinted.
- *
- * These are [STD] platform hooks, plus the observed feedback container. The
- * empirical reason this matters: opening hints grew the region's text from
- * ~3.5 KB to ~23 KB, so a naive text fingerprint would report a question change
- * every time a learner asked for help. Locked in by the regression test
- * "hint expansion that grows the region 3.5 KB -> 23 KB is NOT a question change".
- */
-export const FEEDBACK_SUBTREES: string[] = [
-  '[role="dialog"]', // [OBS] feedback popovers ("Not quite yet...", "There you go!")
-  '[role="alert"]', // [STD] assertive announcements
-  '[aria-live]', // [STD] polite announcements, e.g. result banners
-];
-
-/**
- * Hint / solution subtrees removed before fingerprinting.
- *
- * Deliberately EMPTY: no stable, non-hashed selector for the hint container
- * could be established from observation, so none is invented here.
- *
- * This is not a gap in the design, because the primary question identity is the
- * progress marker's *index* (see `readProgress`), which observation proved does
- * NOT move when auxiliary content appears:
- *
- *   [VER] After confirming "Yes, skip", the hints for the current question all
- *   expanded inside `form[name="answerform"]`, growing that region's text from
- *   ~3.5 KB to ~23 KB, while `exercise-progress-<i>-...-current` stayed on the
- *   same index. Index-based identity is therefore immune to this by
- *   construction, and `test/detector.test.ts` locks the behaviour in with a
- *   regression test.
- *
- * The fallback fingerprint path (used only when no progress marker exists, i.e.
- * on a page type that has NOT been verified) still strips `FEEDBACK_SUBTREES`,
- * and the overlay reports reduced confidence so degraded detection is visible
- * rather than silently wrong.
- */
-export const HINT_SUBTREES: string[] = [];
-
-/**
- * Answer widget markers used to build a structural signature.
- * [OBS] `.perseus-widget-container` and the `perseus-input` widget class were
- * both present on the captured exercise page.
- */
-export const ANSWER_WIDGET_MARKERS: { name: string; selector: string }[] = [
-  { name: 'radio', selector: 'input[type="radio"]' },
-  { name: 'checkbox', selector: 'input[type="checkbox"]' },
-  { name: 'text', selector: 'input[type="text"], input:not([type])' },
-  { name: 'textarea', selector: 'textarea' },
-  { name: 'select', selector: 'select' },
-  { name: 'editable', selector: '[contenteditable="true"]' },
-  { name: 'widget', selector: '.perseus-widget-container' },
-  { name: 'choice', selector: '[role="radio"], [role="checkbox"], [role="option"]' },
-];
-
-/**
- * Per-question stable identifiers.
- *
- * [VER] Verified ABSENT on the tested exercise page: `data-question-id`,
- * `data-item-id`, `data-problem-id`, `data-perseus-id` and `data-question` all
- * returned zero matches. Khan Academy does not expose a per-question id here,
- * so the fingerprint path is the one that actually runs. The list is kept so
- * that a page which *does* expose one is used without touching the detector.
- */
-export const STABLE_QUESTION_ID_ATTRS: string[] = [
-  'data-question-id',
-  'data-item-id',
-  'data-problem-id',
-];
-
-/**
- * The container that holds the progress indicator and the exercise controls.
- *
- * [OBS] The progress cells live here, in the exercise footer, which is OUTSIDE
- * the question region. Watching it as well means a progress-index change (i.e.
- * a real question advance) is noticed immediately rather than waiting for the
- * next poll.
- */
-export const PROGRESS_CONTAINER: SelectorStrategy[] = [
-  { name: 'content-library-footer', select: first('[data-testid="content-library-footer"]') },
-];
-
-/** Progress indicator container, searched from the document root. */
-export const QUESTION_PROGRESS_STRATEGIES: SelectorStrategy[] = [
-  // [OBS] One element per problem, testid format
-  // `exercise-progress-<index>-<state>` with `-current` on the active one.
-  { name: 'exercise-progress-testid', select: (root) => {
-    const cells = root.querySelectorAll('[data-testid^="exercise-progress-"]');
-    for (const cell of Array.from(cells)) {
-      if ((cell.getAttribute('data-testid') ?? '').endsWith('-current')) return cell;
-    }
-    return null;
-  } },
-];
-
 /** Submit / check-answer control, also used to timestamp the first submission. */
 export const SUBMIT_BUTTON: SelectorStrategy[] = [
   // [OBS] The exercise's primary "Check" button.
   { name: 'exercise-check-answer', select: first('[data-testid="exercise-check-answer"]') },
-];
-
-/** The control that advances to the next question once a question is done. */
-export const NEXT_QUESTION_BUTTON: SelectorStrategy[] = [
-  // [OBS] Replaces the check button after a correct answer.
-  { name: 'exercise-next-question', select: first('[data-testid="exercise-next-question"]') },
 ];
 
 /**
@@ -265,18 +146,29 @@ export interface ProgressInfo {
 export function readProgress(doc: ParentNode): ProgressInfo | null {
   const cells = Array.from(doc.querySelectorAll('[data-testid^="exercise-progress-"]'));
   if (cells.length === 0) return null;
+  // [VER] The total is the number of DISTINCT question indices, not the number
+  // of cells: from its second question on, a unit test renders the progress
+  // bar TWICE inside `content-library-footer` - once inside a "Show all
+  // exercise progress" link and once inside `[data-testid="progress-wrapper"]`,
+  // both with a "3 of 10" label and identical cells, `-current` included.
+  // Counting cells read "3 of 20" on a 10-question test (question 1 had read
+  // "1 of 10"), so one test changed its own identity half-way. Observed live
+  // on an Algebra 1 unit test; quizzes (5) and course challenges (30) render
+  // one copy.
+  const indices = new Set<number>();
+  let current: ProgressInfo | null = null;
   for (const cell of cells) {
     const raw = cell.getAttribute('data-testid') ?? '';
-    if (!raw.endsWith('-current')) continue;
-    const match = raw.match(/^exercise-progress-(\d+)-(.+?)(?:-current)?$/);
+    const match = raw.match(/^exercise-progress-(\d+)-(.+?)(-current)?$/);
     if (!match) continue;
-    return {
-      index: Number(match[1]),
-      total: cells.length,
-      state: match[2] ?? 'unknown',
-      raw,
-    };  }
-  return null;
+    const index = Number(match[1]);
+    indices.add(index);
+    if (match[3] && current === null) {
+      current = { index, total: null, state: match[2] ?? 'unknown', raw };
+    }
+  }
+  if (current === null) return null;
+  return { ...current, total: indices.size };
 }
 
 /**
@@ -290,23 +182,23 @@ export function progressLabel(progress: ProgressInfo | null): string | null {
   return total > 0 ? `${progress.index + 1} of ${total}` : `#${progress.index + 1}`;
 }
 
-/** Exercise identifier from the page's own attribute, when present. */
-export function readExerciseId(doc: ParentNode): string | null {
-  // [OBS] `data-exercise-id="2002"` was present on the captured exercise page.
-  const el = doc.querySelector('[data-exercise-id]');
-  return el?.getAttribute('data-exercise-id') ?? null;
-}
-
 /**
  * Stable key for "which exercise/quiz is this", used to group records and to
  * key the resumable session.
  *
  * The URL shape is `/math/<course>/<unit>/<type>/<slug>` where <type> is one of
- * `e` (exercise), `quiz` or `test` [OBS]. When the page exposes a
- * `data-exercise-id` it is appended, which keeps the key stable if the slug is
- * edited on Khan Academy's side.
+ * `e` (exercise), `quiz` or `test` [OBS]; a course challenge is
+ * `/math/<course>/test/<slug>` [VER].
+ *
+ * The key is derived from the URL ONLY. The page's `data-exercise-id` is
+ * deliberately not used: [VER] on a unit test it names the exercise the
+ * CURRENT QUESTION was drawn from (x799738ed, x6a27f53ef2d0c175, x7a036a2f,
+ * 3033 on four consecutive questions), and on the end screen of a unit test,
+ * course challenge and quiz it changed again. Keyed on it, one test would be
+ * split into one "practice" per question and its end-of-test card would find
+ * none of them.
  */
-export function exerciseKeyFromUrl(rawUrl: string, doc?: ParentNode): string {
+export function exerciseKeyFromUrl(rawUrl: string): string {
   let pathname = rawUrl;
   try {
     pathname = new URL(rawUrl).pathname;
@@ -315,9 +207,7 @@ export function exerciseKeyFromUrl(rawUrl: string, doc?: ParentNode): string {
   }
   const trimmed = pathname.replace(/\/+$/, '');
   const match = trimmed.match(/^(.*\/(?:e|quiz|test)\/[^/]+)/);
-  const base = match?.[1] ?? trimmed;
-  const exerciseId = doc ? readExerciseId(doc) : null;
-  return exerciseId ? `${base}#${exerciseId}` : base;
+  return match?.[1] ?? trimmed;
 }
 
 /* ------------------------------------------------------------------ *
@@ -363,6 +253,91 @@ export function isSummaryPage(doc: ParentNode): boolean {
  */
 export function isStartCardPresent(doc: ParentNode): boolean {
   return doc.querySelector('[data-testid="start-task-card-summary"]') !== null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The whole page, read at once
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which screen of an exercise / quiz / unit test / course challenge is up.
+ *
+ *  - `start-card` the intro card in front of the questions ("Let's go")
+ *  - `question`   a question is being solved and the page says which one
+ *  - `summary`    the end screen after the last question
+ *  - `other`      anything else: a page with nothing to time, or one of the
+ *                 short in-between frames listed on `readPage`
+ */
+export type PageScreen = 'start-card' | 'question' | 'summary' | 'other';
+
+/** The question on screen, as the progress bar reports it. */
+export interface PageQuestion {
+  /** Zero-based position in the set. */
+  index: number;
+  /** Number of questions in the set. */
+  total: number | null;
+  /** The progress cell's state word: `incomplete`, `correct`, `incorrect`. */
+  state: string;
+  /** The page has closed the question: Next is offered, Check is gone. */
+  finished: boolean;
+}
+
+export interface PageState {
+  screen: PageScreen;
+  /** Which exercise / quiz / test this is (see `exerciseKeyFromUrl`). */
+  exerciseKey: string;
+  /** Set exactly when `screen` is `question`. */
+  question: PageQuestion | null;
+}
+
+/**
+ * Everything the timer needs to know about the page, as one small value.
+ *
+ * Meant to be read again on every change and compared with the previous
+ * reading: the differences ARE the events (a new index is a new question, a
+ * state word leaving `incomplete` is an answer, `finished` turning true is the
+ * question being done, `summary` is the end of the set). No fingerprinting and
+ * no settle time are involved, because every input is a discrete marker the
+ * page itself maintains.
+ *
+ * [VER] Walked from start card to end screen, logged out, on a math quiz
+ * (5 questions), a biology quiz (5), a math unit test (10) and a math course
+ * challenge (30); timed by sampling every 25 ms on Let's go, Next and a reload
+ * in the middle of a quiz and a unit test:
+ *
+ *     start card  start-task-card-summary present, no form, no progress
+ *     question    answerform AND an `exercise-progress-*-current` cell; on every
+ *                 test page both appeared in the SAME 25 ms sample, and a
+ *                 reload mid-test came back straight to the same question
+ *     answered    a wrong answer turns the state word to `incorrect` and keeps
+ *                 Check (relabelled "Try again"); a confirmed skip ALSO reads
+ *                 `incorrect`, but replaces Check with Next
+ *     end screen  form and progress gone, exercise chrome still there
+ *
+ * In-between frames read as `other`, never as a question or the end:
+ *   - a form without a progress cell: seen only on an ordinary exercise's first
+ *     render, for at most 71 ms before the cell (0 ms in most loads);
+ *   - progress cells without a form: on the way into the end screen the form
+ *     goes before the cells do (see `isSummaryPage`).
+ */
+export function readPage(doc: ParentNode, url: string): PageState {
+  const exerciseKey = exerciseKeyFromUrl(url);
+  if (isStartCardPresent(doc)) return { screen: 'start-card', exerciseKey, question: null };
+  if (isSummaryPage(doc)) return { screen: 'summary', exerciseKey, question: null };
+  const progress = readProgress(doc);
+  if (progress && doc.querySelector('form[name="answerform"]')) {
+    return {
+      screen: 'question',
+      exerciseKey,
+      question: {
+        index: progress.index,
+        total: progress.total,
+        state: progress.state,
+        finished: isQuestionFinished(doc),
+      },
+    };
+  }
+  return { screen: 'other', exerciseKey, question: null };
 }
 
 /**

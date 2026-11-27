@@ -193,8 +193,8 @@ The bottom card of the popup, **History**, lists your most recent records: the q
 - Up to the **500** most recent records are kept; older ones are dropped automatically.
 - **Clear all records** deletes the history but keeps your settings. The button appears only when
   there is something to clear.
-- Question text and your answers are never stored. Only the timing data and a short local
-  fingerprint of the question are kept.
+- Question text and your answers are never stored. Only the timing data and the question's
+  position in the set (for example "3 of 10") are kept.
 
 ## Your data and privacy
 

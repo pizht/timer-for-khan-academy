@@ -339,6 +339,7 @@ export class TimerEngine {
       expiredAt: this.expiredAt,
       firstSubmissionAt: this.firstSubmissionAt,
       firstSubmissionOutcome: this.firstSubmissionOutcome,
+      wasPaused: this.sawPause,
       savedAt: now,
     };
   }
@@ -367,6 +368,7 @@ export class TimerEngine {
     engine.expiredAt = saved.expiredAt;
     engine.firstSubmissionAt = saved.firstSubmissionAt;
     engine.firstSubmissionOutcome = saved.firstSubmissionOutcome;
+    engine.sawPause = saved.wasPaused;
 
     const wasRunning = saved.phase === 'running' || saved.phase === 'idle';
     if (wasRunning) {

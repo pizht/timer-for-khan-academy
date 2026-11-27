@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SETTINGS,
   MAX_RECORDS,
+  RECORDS_KEY,
+  RECORD_KEY_PREFIX,
   SESSION_TTL_MS,
   addRecord,
   attemptKey,
@@ -104,6 +106,7 @@ function makeSession(overrides: Partial<TimerSerialized> = {}): TimerSerialized 
     expiredAt: null,
     firstSubmissionAt: null,
     firstSubmissionOutcome: null,
+    wasPaused: false,
     savedAt: 1_700_000_012_000,
     ...overrides,
   };
@@ -247,6 +250,15 @@ describe('records', () => {
     await expect(addRecord(area, makeRecord())).resolves.toBeNull();
   });
 
+  it('keeps storage bounded: the cap removes the keys it no longer shows', async () => {
+    const area = new FakeArea();
+    for (let i = 0; i < MAX_RECORDS + 25; i += 1) {
+      await addRecord(area, makeRecord({ id: `r${i}`, startedAt: 1_700_000_000_000 + i }));
+    }
+    const recordKeys = Object.keys(area.data).filter((key) => key.startsWith(RECORD_KEY_PREFIX));
+    expect(recordKeys).toHaveLength(MAX_RECORDS);
+  });
+
   it('clears records but leaves settings alone (spec 8.4)', async () => {
     const area = new FakeArea();
     await saveSettings(area, { ...DEFAULT_SETTINGS, countdownLimitSeconds: 120 });
@@ -307,6 +319,73 @@ describe('records', () => {
  * left the practice and came back to it) have two different starts, so they are
  * kept and their row adds up.
  */
+/**
+ * Earlier versions kept every record in ONE shared `records` list, which
+ * several tabs (and the popup) read-modify-wrote and could therefore tear - see
+ * `tests/storage.property.test.ts`. Records now have one key each; a learner
+ * upgrading keeps the history the old list holds.
+ */
+describe('records saved by an older version (shared list)', () => {
+  const legacy = (ids: string[]): Record<string, unknown> => ({
+    [RECORDS_KEY]: {
+      version: 1,
+      records: ids.map((id, i) => makeRecord({ id, startedAt: 1_600_000_000_000 + i })),
+    },
+  });
+
+  it('are still read, oldest first, before the newer records', async () => {
+    const area = new FakeArea();
+    area.data = legacy(['old_1', 'old_2']);
+    await addRecord(area, makeRecord({ id: 'new_1' }));
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual([
+      'old_1',
+      'old_2',
+      'new_1',
+    ]);
+  });
+
+  it('are never rewritten by a new record', async () => {
+    const area = new FakeArea();
+    area.data = legacy(['old_1']);
+    const before = JSON.stringify(area.data[RECORDS_KEY]);
+    await addRecord(area, makeRecord({ id: 'new_1' }));
+    expect(JSON.stringify(area.data[RECORDS_KEY])).toBe(before);
+  });
+
+  it('are removed by Clear, together with the newer records', async () => {
+    const area = new FakeArea();
+    area.data = legacy(['old_1']);
+    await addRecord(area, makeRecord({ id: 'new_1' }));
+    expect(await clearRecords(area)).toBe(true);
+    expect(await loadRecords(area)).toEqual([]);
+    expect(Object.keys(area.data)).toEqual([]);
+  });
+
+  it('count toward the cap, and the list is dropped once newer records fill it', async () => {
+    const area = new FakeArea();
+    area.data = legacy(['old_1', 'old_2']);
+    for (let i = 0; i < MAX_RECORDS - 1; i += 1) {
+      await addRecord(area, makeRecord({ id: `r${i}`, startedAt: 1_700_000_000_000 + i }));
+    }
+    // 2 legacy + 499 new: the oldest legacy record is no longer shown.
+    const shown = await loadRecords(area);
+    expect(shown).toHaveLength(MAX_RECORDS);
+    expect(shown[0]?.id).toBe('old_2');
+
+    await addRecord(area, makeRecord({ id: 'r_last', startedAt: 1_800_000_000_000 }));
+    expect(area.data[RECORDS_KEY]).toBeUndefined();
+    expect((await loadRecords(area))[0]?.id).toBe('r0');
+  });
+
+  it('do not appear twice when a new record repeats one of their stretches', async () => {
+    const area = new FakeArea();
+    area.data = legacy(['old_1']);
+    const [stored] = await loadRecords(area);
+    await addRecord(area, { ...stored!, id: 'rewrite' });
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual(['old_1']);
+  });
+});
+
 describe('one stretch of a question is one record', () => {
   const STRETCH = makeRecord({ id: 'rec_1' });
   /** The same stretch, written again: what a re-write of a held record looks like. */

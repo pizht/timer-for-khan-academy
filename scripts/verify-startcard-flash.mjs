@@ -34,6 +34,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
+import { STORED_RECORDS_FN } from './lib/stored-records.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -566,11 +567,11 @@ async function main() {
               const all = await new Promise((r, j) => {
                 try { chrome.storage.local.get(null, r); } catch (e) { j(e); }
               });
-              const list = (all && all.records && all.records.records) || [];
+              const list = (${STORED_RECORDS_FN})(all || {});
               const sessions = Object.entries(all || {})
                 .filter(([k]) => k.startsWith('session:'))
                 .map(([k, v]) => ({ k, accumulatedMs: v.accumulatedMs, pausedMs: v.pausedMs,
-                  sawPause: v.sawPause, phase: v.phase, questionKey: v.questionKey }));
+                  wasPaused: v.wasPaused, phase: v.phase, questionKey: v.questionKey }));
               return {
                 keys: Object.keys(all || {}),
                 sessions,

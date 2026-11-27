@@ -23,7 +23,9 @@ import type {
 } from './types.js';
 import { formatDuration } from './timer-engine.js';
 import { t } from './i18n/index.js';
-import { OVERLAY_HOST_ID } from './question-detector.js';
+
+/** The element our own panel is mounted in; never treated as page content. */
+export const OVERLAY_HOST_ID = 'khan-academy-timer-host';
 
 export interface OverlayState {
   mode: TimerMode;
