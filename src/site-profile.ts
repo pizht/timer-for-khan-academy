@@ -301,23 +301,23 @@ export function progressLabel(progress: ProgressInfo | null): string | null {
   return total > 0 ? `${progress.index + 1} of ${total}` : `#${progress.index + 1}`;
 }
 
-/** Exercise identifier from the page's own attribute, when present. */
-export function readExerciseId(doc: ParentNode): string | null {
-  // [OBS] `data-exercise-id="2002"` was present on the captured exercise page.
-  const el = doc.querySelector('[data-exercise-id]');
-  return el?.getAttribute('data-exercise-id') ?? null;
-}
-
 /**
  * Stable key for "which exercise/quiz is this", used to group records and to
  * key the resumable session.
  *
  * The URL shape is `/math/<course>/<unit>/<type>/<slug>` where <type> is one of
- * `e` (exercise), `quiz` or `test` [OBS]. When the page exposes a
- * `data-exercise-id` it is appended, which keeps the key stable if the slug is
- * edited on Khan Academy's side.
+ * `e` (exercise), `quiz` or `test` [OBS]; a course challenge is
+ * `/math/<course>/test/<slug>` [VER].
+ *
+ * The key is derived from the URL ONLY. The page's `data-exercise-id` is
+ * deliberately not used: [VER] on a unit test it names the exercise the
+ * CURRENT QUESTION was drawn from (x799738ed, x6a27f53ef2d0c175, x7a036a2f,
+ * 3033 on four consecutive questions), and on the end screen of a unit test,
+ * course challenge and quiz it changed again. Keyed on it, one test would be
+ * split into one "practice" per question and its end-of-test card would find
+ * none of them.
  */
-export function exerciseKeyFromUrl(rawUrl: string, doc?: ParentNode): string {
+export function exerciseKeyFromUrl(rawUrl: string): string {
   let pathname = rawUrl;
   try {
     pathname = new URL(rawUrl).pathname;
@@ -326,9 +326,7 @@ export function exerciseKeyFromUrl(rawUrl: string, doc?: ParentNode): string {
   }
   const trimmed = pathname.replace(/\/+$/, '');
   const match = trimmed.match(/^(.*\/(?:e|quiz|test)\/[^/]+)/);
-  const base = match?.[1] ?? trimmed;
-  const exerciseId = doc ? readExerciseId(doc) : null;
-  return exerciseId ? `${base}#${exerciseId}` : base;
+  return match?.[1] ?? trimmed;
 }
 
 /* ------------------------------------------------------------------ *
@@ -374,6 +372,91 @@ export function isSummaryPage(doc: ParentNode): boolean {
  */
 export function isStartCardPresent(doc: ParentNode): boolean {
   return doc.querySelector('[data-testid="start-task-card-summary"]') !== null;
+}
+
+/* ------------------------------------------------------------------ *
+ * The whole page, read at once
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which screen of an exercise / quiz / unit test / course challenge is up.
+ *
+ *  - `start-card` the intro card in front of the questions ("Let's go")
+ *  - `question`   a question is being solved and the page says which one
+ *  - `summary`    the end screen after the last question
+ *  - `other`      anything else: a page with nothing to time, or one of the
+ *                 short in-between frames listed on `readPage`
+ */
+export type PageScreen = 'start-card' | 'question' | 'summary' | 'other';
+
+/** The question on screen, as the progress bar reports it. */
+export interface PageQuestion {
+  /** Zero-based position in the set. */
+  index: number;
+  /** Number of questions in the set. */
+  total: number | null;
+  /** The progress cell's state word: `incomplete`, `correct`, `incorrect`. */
+  state: string;
+  /** The page has closed the question: Next is offered, Check is gone. */
+  finished: boolean;
+}
+
+export interface PageState {
+  screen: PageScreen;
+  /** Which exercise / quiz / test this is (see `exerciseKeyFromUrl`). */
+  exerciseKey: string;
+  /** Set exactly when `screen` is `question`. */
+  question: PageQuestion | null;
+}
+
+/**
+ * Everything the timer needs to know about the page, as one small value.
+ *
+ * Meant to be read again on every change and compared with the previous
+ * reading: the differences ARE the events (a new index is a new question, a
+ * state word leaving `incomplete` is an answer, `finished` turning true is the
+ * question being done, `summary` is the end of the set). No fingerprinting and
+ * no settle time are involved, because every input is a discrete marker the
+ * page itself maintains.
+ *
+ * [VER] Walked from start card to end screen, logged out, on a math quiz
+ * (5 questions), a biology quiz (5), a math unit test (10) and a math course
+ * challenge (30); timed by sampling every 25 ms on Let's go, Next and a reload
+ * in the middle of a quiz and a unit test:
+ *
+ *     start card  start-task-card-summary present, no form, no progress
+ *     question    answerform AND an `exercise-progress-*-current` cell; on every
+ *                 test page both appeared in the SAME 25 ms sample, and a
+ *                 reload mid-test came back straight to the same question
+ *     answered    a wrong answer turns the state word to `incorrect` and keeps
+ *                 Check (relabelled "Try again"); a confirmed skip ALSO reads
+ *                 `incorrect`, but replaces Check with Next
+ *     end screen  form and progress gone, exercise chrome still there
+ *
+ * In-between frames read as `other`, never as a question or the end:
+ *   - a form without a progress cell: seen only on an ordinary exercise's first
+ *     render, for at most 71 ms before the cell (0 ms in most loads);
+ *   - progress cells without a form: on the way into the end screen the form
+ *     goes before the cells do (see `isSummaryPage`).
+ */
+export function readPage(doc: ParentNode, url: string): PageState {
+  const exerciseKey = exerciseKeyFromUrl(url);
+  if (isStartCardPresent(doc)) return { screen: 'start-card', exerciseKey, question: null };
+  if (isSummaryPage(doc)) return { screen: 'summary', exerciseKey, question: null };
+  const progress = readProgress(doc);
+  if (progress && doc.querySelector('form[name="answerform"]')) {
+    return {
+      screen: 'question',
+      exerciseKey,
+      question: {
+        index: progress.index,
+        total: progress.total,
+        state: progress.state,
+        finished: isQuestionFinished(doc),
+      },
+    };
+  }
+  return { screen: 'other', exerciseKey, question: null };
 }
 
 /**

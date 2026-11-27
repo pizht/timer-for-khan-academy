@@ -135,7 +135,7 @@ src/
 public/                    # manifest.json, popup.html/css, _locales/, icons/ (copied wholesale at build time)
 scripts/                   # build + icon generation + the verification scripts
 scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
-tests/                     # vitest (10 files, two of them fast-check property tests)
+tests/                     # vitest (11 files, three of them with fast-check property tests)
 docs/                      # this developer guide and the i18n notes (the user guide is README.md / README.zh-CN.md)
 assets/logo.png            # icon source art; pnpm run icons generates public/icons/ from it
 ```
@@ -163,7 +163,7 @@ with the `verify:*` commands.
 
 | Layer | Command | Current size | Coverage |
 |---|---|---|---|
-| Unit tests | `pnpm run test` | **296 cases / 10 files** | timer engine (including a fast-check model test), detection decisions and DOM adapter, controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
+| Unit tests | `pnpm run test` | **311 cases / 11 files** | timer engine (including a fast-check model test), detection decisions and DOM adapter, `readPage` (every screen of a quiz / unit test / course challenge), controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
 | Build check | `node scripts/verify-dist.mjs` | **61 checks** | manifest parses and every file it references exists, permission allowlist, content-script match scope, no network/dynamic-execution code in `dist/*.js`, icon sizes, `_locales` and every `__MSG_*` resolves |
 | Real browser | `pnpm run verify:edge`, `verify:startcard`, `verify:practice-switch` | end to end | loads `dist/` as an unpacked extension into real Edge and reads the panel's Shadow DOM and `chrome.storage.local` over CDP |
 

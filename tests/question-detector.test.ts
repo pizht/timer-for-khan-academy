@@ -840,10 +840,9 @@ describe('site-profile: exerciseKeyFromUrl', () => {
     expect(exerciseKeyFromUrl(`${base}/math/x/quiz/quiz-1?referrer=upsell`)).toBe('/math/x/quiz/quiz-1');
   });
 
-  it('appends the page-declared exercise id when present (spec 12.1)', () => {
-    document.body.innerHTML = '<div data-exercise-id="2002"></div>';
-    expect(exerciseKeyFromUrl(`${base}/math/x/e/addition_4`, document)).toBe(
-      '/math/x/e/addition_4#2002',
+  it('handles a course challenge, which sits directly under the course', () => {
+    expect(exerciseKeyFromUrl(`${base}/math/algebra/test/x2f8bb11595b61c86:course-challenge`)).toBe(
+      '/math/algebra/test/x2f8bb11595b61c86:course-challenge',
     );
   });
 
