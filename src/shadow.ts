@@ -1,19 +1,19 @@
 /**
- * Shadow comparison: `readPage` running alongside the current detector.
+ * Shadow comparison: what the controller concludes vs what `readPage` concludes.
  *
- * Step 2 of replacing fingerprint-based detection with `readPage` (see
- * `src/site-profile.ts`). Nothing here changes what the extension does: on
- * every tick the controller reduces both views of the page to the same small
- * shape and this module records where, and for how long, they disagree. The
- * result is published in the page's diagnostics attribute, asserted on by the
- * controller tests and read by the live verification, so the replacement is
- * only made once the two have been seen to agree.
+ * Introduced to prove `readPage` (see `src/site-profile.ts`) against the old
+ * fingerprint detector before replacing it - which it then did. It stays as a
+ * guard on the controller's own state handling: on every tick the controller
+ * reduces its view (the question being timed, or the end screen) and
+ * `readPage`'s view to the same small shape, and this module records where,
+ * and for how long, they disagree. The result is published in the page's
+ * diagnostics attribute, asserted on by the controller tests and read by the
+ * live verification.
  *
- * Disagreeing for a moment is expected, not a fault: the current detector
- * commits a new question only after it has been stable for `debounceMs` and
- * `cooldownMs` has passed since the last change (400 ms / 1200 ms by default),
- * and it enters the summary on its own polling interval. What matters is how
- * LONG a disagreement lasts, so episodes are measured rather than counted.
+ * Disagreeing for a moment is expected: the controller enters the end screen on
+ * its own polling interval and both views are sampled on a tick. What matters
+ * is how LONG a disagreement lasts, so episodes are measured rather than
+ * counted.
  */
 
 import type { PageState } from './site-profile.js';

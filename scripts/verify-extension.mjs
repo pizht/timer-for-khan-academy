@@ -330,11 +330,11 @@ const ADVANCE_LABEL = `(() => {
 })()`;
 
 /**
- * Shadow mode (step 2 of replacing the detector with `readPage`): the extension
- * compares `readPage` with its current detector on every tick and publishes the
- * longest disagreement in its diagnostics. Allowed: as long as the detector
- * itself may lag - its 400 ms debounce plus 1200 ms cooldown, plus one tick,
- * rounded up (the same bound `tests/controller.test.ts` holds every scenario to).
+ * Shadow comparison (see src/shadow.ts): the extension compares what the
+ * controller concludes with what `readPage` concludes on its own, on every
+ * tick, and publishes the longest disagreement in its diagnostics. The same
+ * bound as `tests/controller.test.ts` (the controller's 700 ms end-screen
+ * check plus 250 ms ticks, with room to spare; never more than 750 ms seen).
  */
 const SHADOW_TOLERANCE_MS = 2000;
 

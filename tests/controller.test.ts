@@ -405,11 +405,12 @@ beforeEach(() => {
 });
 
 /**
- * Shadow mode (step 2 of replacing the detector with `readPage`): in every
- * scenario of this file, `readPage` runs next to the current detector and may
- * disagree with it only for as long as the detector itself is allowed to lag -
- * its 400 ms debounce plus 1200 ms cooldown, plus one 250 ms tick, rounded up.
- * Measured when this was introduced: no scenario exceeded one tick.
+ * Shadow comparison (see src/shadow.ts): in every scenario of this file, what
+ * the controller concludes may disagree with what `readPage` concludes on its
+ * own only briefly. The controller looks for the end screen on its own 700 ms
+ * check and both are sampled on a 250 ms tick; 2000 ms leaves room for that.
+ * Measured: no scenario exceeded one tick, before or after the detector was
+ * rebuilt on `readPage`.
  */
 const SHADOW_TOLERANCE_MS = 2000;
 
@@ -1040,7 +1041,9 @@ describe('a question region that carries no position yet', () => {
     const session = savedSession(data, EXERCISE_A);
     expect(session['questionKey']).toBe('id:progress:1 of 4');
     expect(session['pausedMs']).toBe(0);
-    expect(typeof session['stemFingerprint']).toBe('string');
+    // Questions are no longer fingerprinted (see src/question-detector.ts): the
+    // position the page reports is the identity, so the session carries none.
+    expect(session['stemFingerprint']).toBeNull();
   });
 
   it('resumes the accumulated time across a reload, without billing the load', async () => {

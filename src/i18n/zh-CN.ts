@@ -108,7 +108,7 @@ export const zhCN: Record<MessageKey, string> = {
   'popup.overTime': '已超时',
   'popup.detailStrategy': '识别方式',
   'popup.detailConfidence': '置信度',
-  'popup.detailQuestionKey': '题目指纹',
+  'popup.detailQuestionKey': '题目标识',
   'popup.detailProgress': '题目进度',
   'popup.detailLastEvent': '最近事件',
   'popup.diagnosticsSummary': '诊断信息',

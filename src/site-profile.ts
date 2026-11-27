@@ -27,6 +27,18 @@
 
 import type { FirstSubmissionOutcome } from './types.js';
 
+/**
+ * The page is read through `readPage` (end of this file), from markers the page
+ * maintains itself. The question region used to be fingerprinted instead (stem
+ * text, answer-widget shape, hint and feedback subtrees removed); those
+ * selectors went with that approach. The facts behind them explain why
+ * content was never a usable identity: [VER] opening hints grew the answer
+ * form's text from ~3.5 KB to ~23 KB (kept as a regression test in
+ * tests/question-detector.test.ts), and [VER] `content-panel-wrapper` grows a
+ * "Related content" sidebar after an answer. Neither moves the progress
+ * position, which is why the position is the identity.
+ */
+
 /** A named selector strategy. The `name` appears in diagnostic output. */
 export interface SelectorStrategy {
   /** Stable identifier shown in the popup's diagnostics list. */
@@ -37,141 +49,10 @@ export interface SelectorStrategy {
 const first = (selector: string) => (root: ParentNode): Element | null =>
   root.querySelector(selector);
 
-/**
- * The question region: the subtree whose content defines "the current
- * question". Everything hashed out here is stable across answering.
- */
-export const QUESTION_REGION: SelectorStrategy[] = [
-  // [OBS][VER] Perseus renders the whole question, including every answer
-  // widget, inside a form with this name. Its text was byte-identical before
-  // and after submitting an answer.
-  { name: 'perseus-answerform', select: first('form[name="answerform"]') },
-  // [OBS] The framework wrapper around the renderer. Stable across answering;
-  // also matches when the answer form itself is not rendered.
-  { name: 'perseus-framework', select: first('.framework-perseus') },
-  // [OBS] The responsive renderer root. Last resort: narrower than the
-  // framework, so it may miss widgets rendered outside the renderer.
-  { name: 'perseus-renderer', select: first('.perseus-renderer') },
-];
-
-/**
- * Narrower stem lookup inside the region. When none matches, the whole
- * region (minus excluded subtrees) is used as the stem.
- */
-export const QUESTION_STEM: SelectorStrategy[] = [
-  // [OBS] The responsive renderer holds the full question content. On the
-  // captured page its text was exactly the stem ("Add.608+251") and was
-  // byte-identical before and after an answer was submitted.
-  { name: 'perseus-renderer-root', select: first('.perseus-renderer') },
-  // [OBS] Fallback: Perseus tags each question paragraph with its index.
-  { name: 'perseus-paragraph-index', select: first('[data-perseus-paragraph-index]') },
-];
-
-/**
- * Subtrees removed from the region before it is fingerprinted.
- *
- * These are [STD] platform hooks, plus the observed feedback container. The
- * empirical reason this matters: opening hints grew the region's text from
- * ~3.5 KB to ~23 KB, so a naive text fingerprint would report a question change
- * every time a learner asked for help. Locked in by the regression test
- * "hint expansion that grows the region 3.5 KB -> 23 KB is NOT a question change".
- */
-export const FEEDBACK_SUBTREES: string[] = [
-  '[role="dialog"]', // [OBS] feedback popovers ("Not quite yet...", "There you go!")
-  '[role="alert"]', // [STD] assertive announcements
-  '[aria-live]', // [STD] polite announcements, e.g. result banners
-];
-
-/**
- * Hint / solution subtrees removed before fingerprinting.
- *
- * Deliberately EMPTY: no stable, non-hashed selector for the hint container
- * could be established from observation, so none is invented here.
- *
- * This is not a gap in the design, because the primary question identity is the
- * progress marker's *index* (see `readProgress`), which observation proved does
- * NOT move when auxiliary content appears:
- *
- *   [VER] After confirming "Yes, skip", the hints for the current question all
- *   expanded inside `form[name="answerform"]`, growing that region's text from
- *   ~3.5 KB to ~23 KB, while `exercise-progress-<i>-...-current` stayed on the
- *   same index. Index-based identity is therefore immune to this by
- *   construction, and `test/detector.test.ts` locks the behaviour in with a
- *   regression test.
- *
- * The fallback fingerprint path (used only when no progress marker exists, i.e.
- * on a page type that has NOT been verified) still strips `FEEDBACK_SUBTREES`,
- * and the overlay reports reduced confidence so degraded detection is visible
- * rather than silently wrong.
- */
-export const HINT_SUBTREES: string[] = [];
-
-/**
- * Answer widget markers used to build a structural signature.
- * [OBS] `.perseus-widget-container` and the `perseus-input` widget class were
- * both present on the captured exercise page.
- */
-export const ANSWER_WIDGET_MARKERS: { name: string; selector: string }[] = [
-  { name: 'radio', selector: 'input[type="radio"]' },
-  { name: 'checkbox', selector: 'input[type="checkbox"]' },
-  { name: 'text', selector: 'input[type="text"], input:not([type])' },
-  { name: 'textarea', selector: 'textarea' },
-  { name: 'select', selector: 'select' },
-  { name: 'editable', selector: '[contenteditable="true"]' },
-  { name: 'widget', selector: '.perseus-widget-container' },
-  { name: 'choice', selector: '[role="radio"], [role="checkbox"], [role="option"]' },
-];
-
-/**
- * Per-question stable identifiers.
- *
- * [VER] Verified ABSENT on the tested exercise page: `data-question-id`,
- * `data-item-id`, `data-problem-id`, `data-perseus-id` and `data-question` all
- * returned zero matches. Khan Academy does not expose a per-question id here,
- * so the fingerprint path is the one that actually runs. The list is kept so
- * that a page which *does* expose one is used without touching the detector.
- */
-export const STABLE_QUESTION_ID_ATTRS: string[] = [
-  'data-question-id',
-  'data-item-id',
-  'data-problem-id',
-];
-
-/**
- * The container that holds the progress indicator and the exercise controls.
- *
- * [OBS] The progress cells live here, in the exercise footer, which is OUTSIDE
- * the question region. Watching it as well means a progress-index change (i.e.
- * a real question advance) is noticed immediately rather than waiting for the
- * next poll.
- */
-export const PROGRESS_CONTAINER: SelectorStrategy[] = [
-  { name: 'content-library-footer', select: first('[data-testid="content-library-footer"]') },
-];
-
-/** Progress indicator container, searched from the document root. */
-export const QUESTION_PROGRESS_STRATEGIES: SelectorStrategy[] = [
-  // [OBS] One element per problem, testid format
-  // `exercise-progress-<index>-<state>` with `-current` on the active one.
-  { name: 'exercise-progress-testid', select: (root) => {
-    const cells = root.querySelectorAll('[data-testid^="exercise-progress-"]');
-    for (const cell of Array.from(cells)) {
-      if ((cell.getAttribute('data-testid') ?? '').endsWith('-current')) return cell;
-    }
-    return null;
-  } },
-];
-
 /** Submit / check-answer control, also used to timestamp the first submission. */
 export const SUBMIT_BUTTON: SelectorStrategy[] = [
   // [OBS] The exercise's primary "Check" button.
   { name: 'exercise-check-answer', select: first('[data-testid="exercise-check-answer"]') },
-];
-
-/** The control that advances to the next question once a question is done. */
-export const NEXT_QUESTION_BUTTON: SelectorStrategy[] = [
-  // [OBS] Replaces the check button after a correct answer.
-  { name: 'exercise-next-question', select: first('[data-testid="exercise-next-question"]') },
 ];
 
 /**

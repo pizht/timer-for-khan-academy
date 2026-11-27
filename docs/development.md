@@ -96,7 +96,8 @@ changing a selector, capture a fresh copy of the real DOM as described in
 | Invariant | Explanation | Main location |
 |---|---|---|
 | **Question identity = progress index** | Identity is the **index** in `exercise-progress-<index>-<state>`, never the state segment — the state changes on every answer submission, so including it would mean "answering a question counts as a question change". The site exposes no stable per-question id. | `question-detector.ts`, `site-profile.ts` |
-| **An identity upgrade is not a question change** | On load the question region appears first (text fingerprint only) and the progress marker ~20–190 ms later. That is an **identity upgrade of the same question** and must preserve the engine and the session, otherwise every question would restart from zero a second after loading. | `question-detector.ts` |
+| **Detection reads the page's own markers and reports the difference** | `readPage()` turns the page into one small value: start card / question (position, state word, finished) / end screen / other. The detector re-reads it on every document change (one observer, throttled to 100 ms, plus a 700 ms poll for URL changes) and reports only what changed. A new position is committed on the reading that shows it: the marker is discrete and never flapped, so there is no de-bounce, and the question region is no longer fingerprinted. Verified on quizzes, unit tests and course challenges (form and position appear in the same 25 ms sample) and on exercises (≤ 71 ms apart). | `site-profile.ts`, `question-detector.ts` |
+| **The end screen needs history** | Three other frames have the end screen's exact structure: an exercise's loading frame, the torn-down frame of a practice being left, and an unfinished question dropped for a moment. A summary-shaped page counts as the end of a set only right after a **finished** question (Next shown, or `correct`) of the same exercise. | `controller.ts`, `shadow.ts` |
 | **Timing starts when the page reports the question number** | While the region is rendered but no position is known: no panel, no timing, no accumulated paused time. This removed the phantom `Paused 0:01` on question 1. | `controller.ts` |
 | **The panel only appears over a question being solved** | The host `#khan-academy-timer-host` mounts as `display:none` and is only shown by the render loop once a position is reported; it stays hidden on start cards, lesson pages and videos, and never flashes. | `overlay.ts`, `controller.ts` |
 | **Detection failure = pause, not reset** | When the question region or any identity signal is missing: hide the panel and **pause** the question (engine, accumulated time, first-submission timestamp and `runId` are all kept), then resume from the paused value when the same question returns; **a pause the learner asked for is never auto-resumed**. The unreadable stretch is not counted as time, but the question still appears in the end-of-exercise summary. | `controller.ts`, `timer-engine.ts` |
@@ -109,9 +110,8 @@ changing a selector, capture a fresh copy of the real DOM as described in
 | **i18n: `en.ts` is the source of truth for keys** | `MessageKey` is derived from `src/i18n/en.ts`; every other language is a `Record<MessageKey, string>`, so **a missing translation fails to compile**; `_locales/` only holds the extension name and description. | `src/i18n/`, [`docs/i18n.md`](i18n.md) |
 | **One source for the version number** | `scripts/build.mjs` writes `package.json`'s `version` into `dist/manifest.json`; the manifest only accepts plain dotted-numeric versions. | `scripts/build.mjs` |
 
-Debounce and cooldown defaults (overridable in settings, not exposed in the popup): a new identity
-must stay stable for **400 ms** and be **≥ 1200 ms** after the last accepted change; once a candidate
-appears, the detector schedules one deferred re-check.
+The `detectionDebounceMs` / `detectionCooldownMs` settings are still read from storage and passed
+to the detector, but they no longer have any effect (see the row above).
 
 The design rationale for detection details (which container is the question region, why opening a
 hint does not reset the timer, why `Start over` counts as a new question, …) lives in the source
@@ -137,7 +137,7 @@ src/
 ├── popup.ts               # extension popup logic
 ├── i18n/                  # all UI copy: en.ts source of truth + zh-CN.ts translation + t()/localizeDom()
 ├── sound.ts               # countdown tone (synthesised with Web Audio, no audio files)
-├── types.ts / util.ts     # shared types / fingerprint hashing and helpers
+├── types.ts / util.ts     # shared types / small helpers
 public/                    # manifest.json, popup.html/css, _locales/, icons/ (copied wholesale at build time)
 scripts/                   # build + icon generation + the verification scripts
 scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
@@ -178,13 +178,13 @@ pause → resume") have been rewritten as jsdom end-to-end cases where possible 
 *pauses instead of resetting when the question region disappears and comes back* in
 `tests/controller.test.ts`. For the rest, follow the prompts printed by the three `verify:*` commands.
 
-**Shadow mode.** Detection is being moved from fingerprinting the question region to `readPage()`
-(`src/site-profile.ts`): one reading of the page's own markers per change, diffed against the last.
-Until the switch, the controller runs `readPage` next to the current detector on every tick.
-`src/shadow.ts` records how long the two disagree, and the result is published as `shadow` in the
-page's `data-khan-timer-diagnostics`. Every scenario in `tests/controller.test.ts` and both live
-checkpoints in `verify:edge` require the longest disagreement to stay within 2000 ms. That is the
-current detector's own allowed lag: 400 ms debounce + 1200 ms cooldown + one tick.
+**Shadow comparison.** On every tick the controller compares what it has concluded (the question
+being timed, or the end screen) with what `readPage()` plus the end-screen history rule concludes on
+its own (`src/shadow.ts`). The result is published as `shadow` in the page's
+`data-khan-timer-diagnostics`. Every scenario in `tests/controller.test.ts` and both live checkpoints
+in `verify:edge` require the longest disagreement to stay within 2000 ms. The comparison was
+introduced to prove `readPage()` against the old fingerprint detector before replacing it. It now
+guards the controller's own state handling, which the next refactoring step rewrites.
 
 **Property tests** (`tests/*.property.test.ts`, [fast-check](https://fast-check.dev/)) generate
 inputs instead of listing them:

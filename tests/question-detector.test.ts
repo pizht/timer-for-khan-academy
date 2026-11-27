@@ -1,32 +1,31 @@
 /**
  * Question detection tests.
  *
- * Two layers are covered:
+ * `QuestionDetector` reads the page with `readPage` and reports what changed.
+ * It is driven here against a synthetic DOM that mirrors the structure actually
+ * observed on Khan Academy. Before changing any selector, re-capture the live
+ * DOM with scripts/capture/ - see AGENTS.md. Never infer a selector.
  *
- *  1. `QuestionChangeDecider` — the pure decision logic, tested directly with
- *     synthetic snapshots.
- *  2. `QuestionDetector` — the DOM adapter, driven against a synthetic DOM that
- *     mirrors the structure actually observed on Khan Academy. Before changing
- *     any selector, re-capture the live DOM with scripts/capture/ — see
- *     AGENTS.md. Never infer a selector.
- *
- * The regression block near the end encodes the two most important empirical
- * findings from live observation. Both are cases where a naive implementation
- * would wrongly reset the timer, so they are locked in as tests:
+ * The regression block encodes the two most important empirical findings from
+ * live observation. Both are cases where a naive implementation would wrongly
+ * reset the timer:
  *
  *   - submitting an answer changes the progress marker's STATE segment
  *     (`incomplete` -> `correct`), which must NOT count as a question change;
  *   - opening hints/solutions exploded the question region's text from ~3.5 KB
  *     to ~23 KB, which must NOT count as a question change either.
+ *
+ * With identity taken from the progress POSITION both hold by construction;
+ * the tests keep it that way.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  QuestionChangeDecider,
+  OVERLAY_HOST_ID,
   QuestionDetector,
-  buildQuestionIdentity,
   identityKeyOf,
   isPositionedQuestionKey,
+  type ProgressStateChange,
 } from '../src/question-detector.js';
 import {
   completionTriggerFor,
@@ -43,266 +42,6 @@ import type { DetectionEvent, QuestionSnapshot } from '../src/types.js';
 
 const T0 = 1_700_000_000_000;
 
-/** Build a snapshot with sensible defaults, overriding what a test cares about. */
-function snap(overrides: Partial<QuestionSnapshot> = {}): QuestionSnapshot {
-  return {
-    at: T0,
-    stableId: null,
-    fingerprint: null,
-    stemFingerprint: null,
-    progress: null,
-    url: 'https://www.khanacademy.org/math/x/e/addition_4',
-    regionFound: true,
-    strategy: 'perseus-answerform',
-    confidence: 'none',
-    ...overrides,
-  };
-}
-
-/** A snapshot whose identity comes from the progress marker, as on real pages. */
-function progressSnap(index: number, total: number, at: number): QuestionSnapshot {
-  return snap({
-    at,
-    stableId: `progress:${index + 1} of ${total}`,
-    progress: `${index + 1} of ${total}`,
-    confidence: 'stable-id',
-  });
-}
-
-/** A snapshot whose identity comes from the fallback fingerprint. */
-function fingerprintSnap(fingerprint: string, at: number): QuestionSnapshot {
-  return snap({ at, fingerprint, confidence: 'fingerprint' });
-}
-
-describe('buildQuestionIdentity', () => {
-  it('prefers a site-provided stable id', () => {
-    const identity = buildQuestionIdentity({
-      stemText: 'Add. 608+251',
-      widgetSignature: 'text=1',
-      progress: '1 of 4',
-      stableId: 'abc123',
-    });
-    expect(identity).toEqual({ key: 'id:abc123', confidence: 'stable-id' });
-  });
-
-  it('falls back to a fingerprint over stem, widget shape and progress', () => {
-    const identity = buildQuestionIdentity({
-      stemText: 'Add. 608+251',
-      widgetSignature: 'text=1',
-      progress: '1 of 4',
-      stableId: null,
-    });
-    expect(identity?.confidence).toBe('fingerprint');
-    expect(identity?.key.startsWith('fp:')).toBe(true);
-  });
-
-  it('produces different fingerprints for different stems', () => {
-    const a = buildQuestionIdentity({ stemText: 'Add. 608+251', widgetSignature: 'text=1', progress: '1 of 4', stableId: null });
-    const b = buildQuestionIdentity({ stemText: 'Add. 832+95', widgetSignature: 'text=1', progress: '1 of 4', stableId: null });
-    expect(a?.key).not.toBe(b?.key);
-  });
-
-  it('distinguishes otherwise identical stems by progress marker (spec 12.3)', () => {
-    const q3 = buildQuestionIdentity({ stemText: 'Add. 1+1', widgetSignature: 'text=1', progress: '3 of 7', stableId: null });
-    const q4 = buildQuestionIdentity({ stemText: 'Add. 1+1', widgetSignature: 'text=1', progress: '4 of 7', stableId: null });
-    expect(q3?.key).not.toBe(q4?.key);
-  });
-
-  it('ignores cosmetic whitespace differences in the stem', () => {
-    const a = buildQuestionIdentity({ stemText: 'Add.  608 + 251', widgetSignature: 'text=1', progress: '1 of 4', stableId: null });
-    const b = buildQuestionIdentity({ stemText: ' Add.\n608 + 251 ', widgetSignature: 'text=1', progress: '1 of 4', stableId: null });
-    expect(a?.key).toBe(b?.key);
-  });
-
-  it('uses the progress marker alone when there is no stem or widget shape', () => {
-    const identity = buildQuestionIdentity({ stemText: '', widgetSignature: '', progress: '2 of 5', stableId: null });
-    expect(identity).toEqual({ key: 'prog:2 of 5', confidence: 'weak' });
-  });
-
-  it('returns null when nothing usable is available', () => {
-    expect(buildQuestionIdentity({ stemText: '', widgetSignature: '', progress: null, stableId: null })).toBeNull();
-  });
-});
-
-describe('identityKeyOf', () => {
-  it('prefers stableId over fingerprint', () => {
-    expect(identityKeyOf(snap({ stableId: 'x', fingerprint: 'y' }))).toBe('id:x');
-  });
-
-  it('falls back to the fingerprint', () => {
-    expect(identityKeyOf(snap({ fingerprint: 'y' }))).toBe('fp:y');
-  });
-
-  it('returns null when neither exists', () => {
-    expect(identityKeyOf(snap())).toBeNull();
-  });
-});
-
-/**
- * The signal the floating panel is gated on: has the page said WHICH question is
- * on screen? A fingerprint only says "this content looks stable", which is also
- * true of an exercise's start card while it still holds the previous question's
- * framework — the state in which the panel used to flash and then close.
- */
-describe('isPositionedQuestionKey', () => {
-  it('accepts the verified progress identity', () => {
-    expect(isPositionedQuestionKey('id:progress:3 of 7')).toBe(true);
-  });
-
-  it('accepts a site-provided per-question id', () => {
-    expect(isPositionedQuestionKey('id:abc123')).toBe(true);
-  });
-
-  it('rejects a fingerprint identity', () => {
-    expect(isPositionedQuestionKey('fp:9f2c1ab4')).toBe(false);
-  });
-
-  it('rejects a progress-only weak identity and no identity at all', () => {
-    expect(isPositionedQuestionKey('prog:2 of 5')).toBe(false);
-    expect(isPositionedQuestionKey(null)).toBe(false);
-  });
-});
-
-describe('QuestionChangeDecider', () => {
-  let decider: QuestionChangeDecider;
-  let events: DetectionEvent[];
-
-  const observe = (s: QuestionSnapshot): DetectionEvent => {
-    const event = decider.observe(s);
-    events.push(event);
-    return event;
-  };
-
-  beforeEach(() => {
-    decider = new QuestionChangeDecider({ debounceMs: 400, cooldownMs: 1200 });
-    events = [];
-  });
-
-  it('emits an initial question-changed with from === null', () => {
-    const event = observe(progressSnap(0, 4, T0));
-    expect(event).toMatchObject({ type: 'question-changed', from: null, reason: 'initial' });
-    expect(decider.getCurrent()?.key).toBe('id:progress:1 of 4');
-  });
-
-  it('reports the same question while the identity is unchanged', () => {
-    observe(progressSnap(0, 4, T0));
-    expect(observe(progressSnap(0, 4, T0 + 500))).toMatchObject({ type: 'same-question' });
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
-  });
-
-  it('requires a candidate to stay stable for the de-bounce window', () => {
-    observe(progressSnap(0, 4, T0));
-    // First sighting of the new identity: only a candidate.
-    expect(observe(progressSnap(1, 4, T0 + 5000))).toMatchObject({ type: 'pending' });
-    // Still inside the de-bounce window.
-    expect(observe(progressSnap(1, 4, T0 + 5100))).toMatchObject({ type: 'pending' });
-    // Now stable for >= 400ms: commit.
-    expect(observe(progressSnap(1, 4, T0 + 5400))).toMatchObject({
-      type: 'question-changed',
-      reason: 'stable-change',
-    });
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(2);
-  });
-
-  it('suppresses duplicates: many observations of one change yield one event', () => {
-    observe(progressSnap(0, 4, T0));
-    for (let i = 1; i <= 50; i += 1) observe(progressSnap(1, 4, T0 + 5000 + i * 20));
-    const changes = events.filter((e) => e.type === 'question-changed');
-    expect(changes).toHaveLength(2); // initial + exactly one real change
-  });
-
-  it('does not switch on an A -> B -> A flap', () => {
-    observe(progressSnap(0, 4, T0));
-    observe(progressSnap(1, 4, T0 + 2000)); // candidate B
-    observe(progressSnap(0, 4, T0 + 2100)); // back to A: candidate dropped
-    observe(progressSnap(1, 4, T0 + 2200)); // candidate B again
-    observe(progressSnap(0, 4, T0 + 2300));
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
-    expect(decider.getCurrent()?.key).toBe('id:progress:1 of 4');
-  });
-
-  it('respects the cooldown between two accepted changes', () => {
-    observe(progressSnap(0, 4, T0));
-    // Commit change to index 1 at T0+1000.
-    observe(progressSnap(1, 4, T0 + 1000));
-    expect(observe(progressSnap(1, 4, T0 + 1450))).toMatchObject({ type: 'question-changed' });
-
-    // A second change immediately after is held back by the cooldown.
-    observe(progressSnap(2, 4, T0 + 1500));
-    expect(observe(progressSnap(2, 4, T0 + 1900))).toMatchObject({ type: 'pending' });
-    // Once the cooldown (1200ms since the last switch at ~1450) has elapsed, commit.
-    expect(observe(progressSnap(2, 4, T0 + 2800))).toMatchObject({ type: 'question-changed' });
-  });
-
-  it('degrades conservatively when no question region is found', () => {
-    const event = observe(snap({ regionFound: false, confidence: 'none' }));
-    expect(event).toMatchObject({ type: 'uncertain' });
-    expect(decider.getCurrent()).toBeNull();
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(0);
-  });
-
-  it('keeps the current timer when the identity disappears mid-question', () => {
-    observe(progressSnap(0, 4, T0));
-    const event = observe(snap({ regionFound: false, at: T0 + 5000 }));
-    expect(event).toMatchObject({ type: 'uncertain' });
-    // Crucially: still on the same question, so timing is not restarted.
-    expect(decider.getCurrent()?.key).toBe('id:progress:1 of 4');
-  });
-
-  it('reports uncertain when no identity signal is available', () => {
-    observe(progressSnap(0, 4, T0));
-    expect(observe(snap({ at: T0 + 5000 }))).toMatchObject({
-      type: 'uncertain',
-      reason: expect.stringContaining('no stable identity'),
-    });
-    expect(decider.getCurrent()?.key).toBe('id:progress:1 of 4');
-  });
-
-  it('commits immediately on forceSwitch (explicit navigation)', () => {
-    observe(progressSnap(0, 4, T0));
-    const event = decider.forceSwitch('id:progress:3 of 4', T0 + 100, 'url-change');
-    expect(event).toMatchObject({ type: 'question-changed', reason: 'url-change' });
-    // Forcing the same key is a no-op rather than a spurious switch.
-    expect(decider.forceSwitch('id:progress:3 of 4', T0 + 200, 'url-change')).toMatchObject({
-      type: 'same-question',
-    });
-  });
-
-  it('reseed restarts even when the identity is unchanged ("Start over")', () => {
-    observe(progressSnap(0, 4, T0));
-    decider.reseed();
-    const event = observe(progressSnap(0, 4, T0 + 9000));
-    expect(event).toMatchObject({ type: 'question-changed', reason: 'reseeded', to: 'id:progress:1 of 4' });
-  });
-
-  it('reset forgets everything so the next observation is initial', () => {
-    observe(progressSnap(2, 4, T0));
-    decider.reset();
-    expect(decider.getCurrent()).toBeNull();
-    expect(observe(progressSnap(0, 4, T0 + 1000))).toMatchObject({ type: 'question-changed', from: null });
-  });
-
-  it('configure updates the windows at runtime', () => {
-    decider.configure({ debounceMs: 0, cooldownMs: 0 });
-    observe(progressSnap(0, 4, T0));
-    observe(progressSnap(1, 4, T0 + 1)); // sets candidate
-    expect(observe(progressSnap(1, 4, T0 + 1))).toMatchObject({ type: 'question-changed' });
-  });
-
-  it('reports whether a candidate change is awaiting confirmation', () => {
-    observe(progressSnap(0, 4, T0));
-    expect(decider.hasPendingCandidate()).toBe(false);
-    observe(progressSnap(1, 4, T0 + 2000));
-    expect(decider.hasPendingCandidate()).toBe(true);
-    observe(progressSnap(1, 4, T0 + 2600));
-    expect(decider.hasPendingCandidate()).toBe(false);
-  });
-});
-
-/* ================================================================== *
- * DOM adapter
- * ================================================================== */
-
 /**
  * Synthetic page mirroring the real structure. The testids, class names and
  * nesting were all taken from captured Khan Academy DOM.
@@ -313,6 +52,7 @@ function khanDom({
   progressTotal = 4,
   stem = 'Add. 608+251',
   withProgress = true,
+  withForm = true,
   withFeedbackDialog = false,
 } = {}): string {
   const cells = Array.from({ length: progressTotal }, (_, i) => {
@@ -323,7 +63,9 @@ function khanDom({
   return `
     <div data-testid="content-panel-wrapper">
       <div class="bibliotron-exercise">
-        <div class="framework-perseus">
+        ${
+          withForm
+            ? `<div class="framework-perseus">
           <h2 class="sr-only">Problem</h2>
           <form name="answerform">
             <div class="perseus-renderer perseus-renderer-responsive">
@@ -333,7 +75,9 @@ function khanDom({
               </div>
             </div>
           </form>
-        </div>
+        </div>`
+            : ''
+        }
       </div>
       ${
         withFeedbackDialog
@@ -351,305 +95,264 @@ function khanDom({
   `;
 }
 
-describe('QuestionDetector — DOM adapter', () => {
-  let detector: QuestionDetector;
-  let events: DetectionEvent[];
+/** Move the current marker from `from` to `to`, as the page does on Next. */
+function advanceMarker(from: number, to: number, fromState = 'correct'): void {
+  document
+    .querySelector(`[data-testid^="exercise-progress-${from}-"][data-testid$="-current"]`)
+    ?.setAttribute('data-testid', `exercise-progress-${from}-${fromState}`);
+  document
+    .querySelector(`[data-testid^="exercise-progress-${to}-"]`)
+    ?.setAttribute('data-testid', `exercise-progress-${to}-incomplete-current`);
+}
 
-  const start = (html: string, options = { debounceMs: 400, cooldownMs: 1200 }): void => {
-    document.body.innerHTML = html;
-    events = [];
-    detector = new QuestionDetector({ onEvent: (event) => events.push(event) }, options);
-    detector.start();
+/** Change the current question's state word, as the page does on Check. */
+function setCurrentState(state: string): void {
+  const cell = document.querySelector('[data-testid$="-current"]');
+  const index = cell?.getAttribute('data-testid')?.match(/^exercise-progress-(\d+)-/)?.[1];
+  cell?.setAttribute('data-testid', `exercise-progress-${index}-${state}-current`);
+}
+
+function removeQuestionArea(): void {
+  document.querySelector('.framework-perseus')?.remove();
+}
+
+interface Harness {
+  detector: QuestionDetector;
+  events: DetectionEvent[];
+  snapshots: QuestionSnapshot[];
+  stateChanges: Array<Pick<ProgressStateChange, 'state' | 'previous' | 'index'>>;
+  last(): DetectionEvent;
+  changes(): DetectionEvent[];
+}
+
+let harness: Harness | null = null;
+
+function start(html: string): Harness {
+  document.body.innerHTML = html;
+  const events: DetectionEvent[] = [];
+  const snapshots: QuestionSnapshot[] = [];
+  const stateChanges: Harness['stateChanges'] = [];
+  const detector = new QuestionDetector({
+    onEvent: (event, snapshot) => {
+      events.push(event);
+      snapshots.push(snapshot);
+    },
+    onProgressStateChange: ({ state, previous, index }) => stateChanges.push({ state, previous, index }),
+  });
+  detector.start();
+  harness = {
+    detector,
+    events,
+    snapshots,
+    stateChanges,
+    last() {
+      const event = events[events.length - 1];
+      if (!event) throw new Error('no detection event recorded');
+      return event;
+    },
+    changes: () => events.filter((event) => event.type === 'question-changed'),
   };
+  return harness;
+}
 
-  const last = (): DetectionEvent => {
-    const event = events[events.length - 1];
-    if (!event) throw new Error('no detection event recorded');
-    return event;
-  };
+/** Let the observer, the throttle and the poll run. */
+async function settle(ms = 150): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
+}
 
-  const currentTestId = (index: number): string => {
-    const el = document.querySelector('[data-testid^="exercise-progress-"]');
-    if (!el) throw new Error('no progress cell');
-    return el.getAttribute('data-testid') ?? '';
-  };
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(T0);
+});
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
+afterEach(() => {
+  harness?.detector.stop();
+  harness = null;
+  vi.useRealTimers();
+  document.body.innerHTML = '';
+  window.history.pushState({}, '', '/');
+});
+
+/* ================================================================== *
+ * Identity helpers kept for the controller
+ * ================================================================== */
+
+describe('identityKeyOf / isPositionedQuestionKey', () => {
+  const snap = (overrides: Partial<QuestionSnapshot>): QuestionSnapshot => ({
+    at: T0,
+    stableId: null,
+    fingerprint: null,
+    stemFingerprint: null,
+    progress: null,
+    url: 'https://www.khanacademy.org/math/x/e/addition_4',
+    regionFound: true,
+    strategy: 'perseus-answerform',
+    confidence: 'none',
+    ...overrides,
   });
 
-  afterEach(() => {
-    detector?.stop();
-    vi.useRealTimers();
-    document.body.innerHTML = '';
+  it('builds the key from the reported position', () => {
+    expect(identityKeyOf(snap({ stableId: 'progress:3 of 7' }))).toBe('id:progress:3 of 7');
+    expect(identityKeyOf(snap({}))).toBeNull();
   });
 
-  it('finds the question region via form[name="answerform"]', () => {
-    start(khanDom());
-    expect(last()).toMatchObject({ type: 'question-changed', from: null });
-    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
+  it('treats only an id key as positioned (a fingerprint key from an old session is not)', () => {
+    expect(isPositionedQuestionKey('id:progress:1 of 4')).toBe(true);
+    expect(isPositionedQuestionKey('fp:abc123')).toBe(false);
+    expect(isPositionedQuestionKey(null)).toBe(false);
+  });
+});
+
+/* ================================================================== *
+ * The detector
+ * ================================================================== */
+
+describe('QuestionDetector', () => {
+  it('reports the first question with its position as its identity', () => {
+    const h = start(khanDom());
+    expect(h.last()).toMatchObject({ type: 'question-changed', from: null, to: 'id:progress:1 of 4', reason: 'initial' });
+    expect(h.snapshots.at(-1)).toMatchObject({
+      stableId: 'progress:1 of 4',
+      progress: '1 of 4',
+      regionFound: true,
+      confidence: 'stable-id',
+    });
   });
 
-  it('uses the progress index as the identity, not the volatile state segment', () => {
-    start(khanDom({ progressState: 'incomplete' }));
-    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
-
-    // Simulate submitting an answer: only the STATE segment changes.
-    const cell = document.querySelector('[data-testid="exercise-progress-0-incomplete-current"]');
-    expect(cell).not.toBeNull();
-    cell?.setAttribute('data-testid', 'exercise-progress-0-correct-current');
-    vi.setSystemTime(T0 + 3000);
-    detector.reevaluate('after-submit');
-
-    expect(last()).toMatchObject({ type: 'same-question' });
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
+  it('commits a new position on the reading that shows it - no pending state, no settle time', async () => {
+    const h = start(khanDom({ progressIndex: 0 }));
+    advanceMarker(0, 1);
+    await settle();
+    expect(h.last()).toMatchObject({
+      type: 'question-changed',
+      from: 'id:progress:1 of 4',
+      to: 'id:progress:2 of 4',
+      reason: 'position-changed',
+    });
+    expect(h.events.some((event) => event.type === 'pending')).toBe(false);
   });
 
-  it('advances only after the new index is stable for the de-bounce window', () => {
-    start(khanDom({ progressIndex: 0 }));
-    // Advance: index 0 -> 1 and a new stem.
-    document
-      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
-      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
-    document
-      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
-      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
-    const stemEl = document.querySelector('[data-perseus-paragraph-index]');
-    if (stemEl) stemEl.textContent = 'Add. 832+95';
-
-    vi.setSystemTime(T0 + 10_000);
-    detector.reevaluate('advance-seen');
-    expect(last()).toMatchObject({ type: 'pending' });
-
-    vi.setSystemTime(T0 + 10_400);
-    detector.reevaluate('advance-stable');
-    expect(last()).toMatchObject({ type: 'question-changed', reason: 'stable-change' });
-    expect(detector.getCurrentKey()).toBe('id:progress:2 of 4');
+  it('notices a change from the DOM alone, within the throttle', async () => {
+    const h = start(khanDom({ progressIndex: 0 }));
+    advanceMarker(0, 1);
+    await settle(120);
+    expect(h.detector.getCurrentKey()).toBe('id:progress:2 of 4');
   });
 
-  it('confirms a pending change by itself, with no further DOM mutations', () => {
-    // REGRESSION: the de-bounce requires a *second* observation once the window
-    // has elapsed. The mutation that revealed the change has already been
-    // consumed by then, so without an explicit follow-up the candidate sat
-    // unconfirmed forever and the panel kept timing the previous question.
-    // Caught by scripts/verify-extension.mjs against the real site.
-    start(khanDom({ progressIndex: 0 }));
-
-    document
-      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
-      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
-    document
-      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
-      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
-
-    vi.setSystemTime(T0 + 10_000);
-    detector.reevaluate('advance-seen');
-    expect(last()).toMatchObject({ type: 'pending' });
-
-    // Nothing else touches the DOM. Only the scheduled follow-up can confirm.
-    vi.advanceTimersByTime(500);
-    expect(last()).toMatchObject({ type: 'question-changed', reason: 'stable-change' });
-    expect(detector.getCurrentKey()).toBe('id:progress:2 of 4');
+  it('reports nothing while the reading does not change', async () => {
+    const h = start(khanDom());
+    const seen = h.events.length;
+    await settle(30_000);
+    expect(h.events).toHaveLength(seen);
   });
 
-  it('confirms a pending change even when mutations keep arriving (no starvation)', () => {
-    // REGRESSION: the follow-up used to be re-armed on every pending event, so
-    // a steady stream of mutations faster than the de-bounce window could
-    // postpone it forever and the change never committed.
-    start(khanDom({ progressIndex: 0 }));
-    document
-      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
-      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
-    document
-      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
-      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
-
-    vi.setSystemTime(T0 + 10_000);
-    detector.reevaluate('advance-1');
-    expect(last()).toMatchObject({ type: 'pending' });
-
-    // Keep poking the detector well inside the de-bounce window. Each poke is
-    // another pending observation that must NOT push the follow-up back.
-    //
-    // Note: `vi.advanceTimersByTime` is used rather than `vi.setSystemTime`
-    // because sinon's `setSystemTime` SHIFTS pending timers by the same delta,
-    // which would move the follow-up forward and mask the starvation bug.
-    for (let i = 1; i <= 12; i += 1) {
-      vi.advanceTimersByTime(30);
-      detector.reevaluate(`poke-${i}`);
-      expect(last()).toMatchObject({ type: 'pending' });
-    }
-
-    // The originally scheduled follow-up still fires on time (armed at
-    // +10_000 for +460ms; we are now at +10_360ms).
-    vi.advanceTimersByTime(200);
-    expect(events.some((e) => e.type === 'question-changed' && e.reason === 'stable-change')).toBe(true);
+  it("ignores the extension's own overlay", async () => {
+    const h = start(khanDom());
+    const seen = h.events.length;
+    const host = document.createElement('div');
+    host.id = OVERLAY_HOST_ID;
+    document.body.append(host);
+    host.setAttribute('data-khan-timer-diagnostics', '{"tick":1}');
+    await settle();
+    expect(h.events).toHaveLength(seen);
   });
 
-  it('cancels the follow-up once the candidate resolves back to the current question', () => {
-    start(khanDom({ progressIndex: 0 }));
-    const cell = document.querySelector('[data-testid="exercise-progress-0-incomplete-current"]');
-    cell?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
-    vi.setSystemTime(T0 + 10_000);
-    detector.reevaluate('flake-1');
-    expect(last()).toMatchObject({ type: 'pending' });
-    // The page settles back to the original question before the window closes.
-    cell?.setAttribute('data-testid', 'exercise-progress-0-incomplete-current');
-    vi.setSystemTime(T0 + 10_100);
-    detector.reevaluate('flake-2');
-    expect(last()).toMatchObject({ type: 'same-question' });
-    const changesBefore = events.filter((e) => e.type === 'question-changed').length;
-    vi.advanceTimersByTime(5000);
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(changesBefore);
-  });
+  it('does not time a question area that has no position yet, then starts on the position', async () => {
+    // An exercise's first render: the form can precede the progress cell (by at
+    // most 71 ms, measured live). No identity, so no clock - and once the
+    // position appears it is the FIRST question, not a change from anything.
+    const h = start(khanDom({ withProgress: false }));
+    expect(h.last()).toMatchObject({ type: 'uncertain', reason: 'no stable identity signal for this question' });
+    expect(h.detector.getCurrentKey()).toBeNull();
 
-  it('does not keep re-evaluating once a candidate is resolved', () => {
-    start(khanDom({ progressIndex: 0 }));
-    document
-      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
-      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
-    document
-      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
-      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
-    vi.setSystemTime(T0 + 10_000);
-    detector.reevaluate('advance-seen');
-    vi.advanceTimersByTime(600);
-    const settled = events.length;
-    // Let a lot of time pass with no DOM changes and no pending candidate:
-    // the poll must not keep emitting detections.
-    vi.advanceTimersByTime(30_000);
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(2);
-    expect(events.length).toBeLessThan(settled + 12);
-  });
-
-  it('goes uncertain, and keeps timing, when the region disappears', () => {
-    start(khanDom());
-    document.querySelector('form[name="answerform"]')?.remove();
-    document.querySelector('.framework-perseus')?.remove();
-    document.querySelector('.perseus-renderer')?.remove();
-
-    vi.setSystemTime(T0 + 5000);
-    detector.reevaluate('region-gone');
-
-    expect(last()).toMatchObject({ type: 'uncertain' });
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
-  });
-
-  /*
-   * Recovery from the unidentified state.
-   *
-   * When the SAME question is re-rendered, the progress marker that carries its
-   * identity does not move at all, and the fresh subtree contains no mutation
-   * the region observer could see (it is attached after the swap). Without an
-   * explicit evaluation on re-attach, detection would stay "uncertain" forever:
-   * the panel would stay hidden and a paused question would never resume.
-   */
-  it('re-evaluates the moment the region comes back, with nothing else changing', async () => {
-    start(khanDom({ progressIndex: 0 }));
-    expect(last()).toMatchObject({ type: 'question-changed' });
-
-    // The question area is swapped out; the exercise chrome stays.
-    document.querySelector('form[name="answerform"]')?.remove();
-    document.querySelector('.framework-perseus')?.remove();
-    document.querySelector('.perseus-renderer')?.remove();
-    await vi.advanceTimersByTimeAsync(800);
-    expect(last()).toMatchObject({ type: 'uncertain' });
-
-    // The very same question is rendered again.
-    const seen = events.length;
     document.body.innerHTML = khanDom({ progressIndex: 0 });
-    await vi.advanceTimersByTimeAsync(100);
+    await settle();
+    expect(h.last()).toMatchObject({ type: 'question-changed', from: null, to: 'id:progress:1 of 4' });
+  });
 
-    expect(events.slice(seen).some((e) => e.type === 'same-question')).toBe(true);
-    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
+  it('goes uncertain, keeping the identity, when the question area disappears', async () => {
+    const h = start(khanDom());
+    removeQuestionArea();
+    await settle();
+    expect(h.last()).toMatchObject({ type: 'uncertain', reason: 'question region not found' });
+    expect(h.detector.getCurrentKey()).toBe('id:progress:1 of 4');
+    expect(h.changes()).toHaveLength(1);
+  });
+
+  it('reports the same question when the same question area comes back', async () => {
+    const h = start(khanDom({ progressIndex: 0 }));
+    removeQuestionArea();
+    await settle();
+    expect(h.last()).toMatchObject({ type: 'uncertain' });
+
+    document.body.innerHTML = khanDom({ progressIndex: 0 });
+    await settle();
+    expect(h.last()).toMatchObject({ type: 'same-question', key: 'id:progress:1 of 4' });
+    expect(h.changes()).toHaveLength(1);
+  });
+
+  it('a start card is not a question, even with a leftover question area', async () => {
+    const h = start(`
+      <div class="bibliotron-exercise">
+        <div data-testid="start-task-card-summary"><button>Let’s go</button></div>
+        ${khanDom()}
+      </div>`);
+    expect(h.last()).toMatchObject({ type: 'uncertain' });
+    expect(h.detector.getCurrentKey()).toBeNull();
   });
 
   /*
    * Switching practice A -> practice B inside the SPA.
    *
-   * B's "Ready to practice?" start card has no answer form, no progress marker
-   * and no exercise footer, so nothing about B is observable yet - and the
-   * index of B's first question is very often the same "1 of N" as A's. Unless
-   * the URL change invalidates A's identity, B's first question is
-   * byte-identical to A's and is reported as "same question": practice A's
-   * engine then stays alive, keeps counting, and is later closed as if A's
-   * question had changed - which is how the in-flight session was destroyed.
+   * B's first question very often sits at the same "1 of N" as A's question,
+   * so its identity string is byte-identical. Unless the URL change drops A's
+   * identity, B's first question is reported as "same question" and A's clock
+   * keeps running into B.
    */
-  it('treats an SPA move to another exercise as a new question, not a continuation', () => {
-    start(khanDom({ progressIndex: 0 }));
-    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
-
+  it('treats an SPA move to another exercise as a new question, not a continuation', async () => {
+    const h = start(khanDom({ progressIndex: 0 }));
     window.history.pushState({}, '', '/math/cc-third-grade-math/e/other-practice');
     document.body.innerHTML =
-      '<div class="bibliotron-exercise">' +
-      '<div data-testid="start-task-card-summary">Ready to practice?</div>' +
-      '</div>';
+      '<div class="bibliotron-exercise"><div data-testid="start-task-card-summary">Ready to practice?</div></div>';
+    await settle();
+    expect(h.detector.getCurrentKey()).toBeNull();
+    expect(h.last()).toMatchObject({ type: 'uncertain' });
 
-    vi.setSystemTime(T0 + 2000);
-    detector.reevaluate('start-card-of-other-exercise');
-
-    // The previous exercise's identity must be gone completely.
-    expect(detector.getCurrentKey()).toBeNull();
-    expect(last()).toMatchObject({ type: 'uncertain' });
-
-    // The new exercise's first question sits at the SAME progress position, so
-    // its identity string is byte-identical to the previous exercise's.
     document.body.innerHTML = khanDom({ progressIndex: 0, stem: 'Multiply. 12x4' });
-    vi.advanceTimersByTime(700);
-
-    expect(last()).toMatchObject({ type: 'question-changed', from: null });
-    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
-    expect(events.some((e) => e.type === 'same-question')).toBe(false);
-
-    window.history.pushState({}, '', '/');
+    await settle();
+    expect(h.last()).toMatchObject({ type: 'question-changed', from: null, to: 'id:progress:1 of 4' });
+    expect(h.events.some((event) => event.type === 'same-question')).toBe(false);
   });
 
-  /*
-   * The progress marker arrives AFTER the question region on a real page load
-   * (measured on khanacademy.org: region at ~2.2 s, marker at ~3.7 s). Timing
-   * therefore starts with a fingerprint identity. Treating the marker's arrival
-   * as a question change restarted the clock at zero a second into every
-   * question - the data loss this test pins down.
-   */
-  it('upgrades a fingerprint identity to the progress id instead of changing question', () => {
-    start(khanDom({ withProgress: false }));
-    const fingerprintKey = detector.getCurrentKey();
-    expect(fingerprintKey?.startsWith('fp:')).toBe(true);
-
-    // The progress marker renders a moment later, inside the footer.
-    const footer = document.querySelector('[data-testid="content-library-footer"]');
-    const cells = Array.from(
-      { length: 4 },
-      (_, i) =>
-        `<div><div data-testid="exercise-progress-${i}-${i === 0 ? 'incomplete-current' : 'incomplete'}"></div></div>`,
-    ).join('');
-    footer?.insertAdjacentHTML('afterbegin', `<div class="progress">${cells}</div>`);
-    vi.setSystemTime(T0 + 3000);
-    detector.reevaluate('progress-marker-appeared');
-
-    expect(last()).toMatchObject({
-      type: 'identity-upgraded',
-      from: fingerprintKey,
-      to: 'id:progress:1 of 4',
-    });
-    // One question, one change event: the timer is never restarted for this.
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
-    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
+  it('notices a URL change with no DOM change at all (the poll)', async () => {
+    const h = start(khanDom({ progressIndex: 0 }));
+    window.history.pushState({}, '', '/math/x/e/addition_4?referrer=upsell');
+    await settle(800);
+    expect(h.last()).toMatchObject({ type: 'question-changed', from: null, to: 'id:progress:1 of 4' });
   });
 
-  it('reseed emits a change for the same identity ("Start over")', () => {
-    start(khanDom());
+  it('reseed reports a change for the same position ("Start over")', () => {
+    const h = start(khanDom());
     vi.setSystemTime(T0 + 20_000);
-    detector.reseed('start-over');
-    expect(last()).toMatchObject({ type: 'question-changed', reason: 'reseeded' });
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(2);
+    h.detector.reseed('start-over');
+    expect(h.last()).toMatchObject({ type: 'question-changed', reason: 'reseeded', to: 'id:progress:1 of 4' });
+    expect(h.changes()).toHaveLength(2);
   });
 
-  it('reports fingerprint confidence when the page exposes no progress marker', () => {
-    start(khanDom({ withProgress: false }));
-    expect(last()).toMatchObject({ type: 'question-changed' });
-    expect(detector.getCurrentKey()?.startsWith('fp:')).toBe(true);
+  it('keeps a unit test at "N of 10" when its progress bar is rendered twice', () => {
+    const cells = (current: number) =>
+      Array.from({ length: 10 }, (_, i) =>
+        `<div><div data-testid="exercise-progress-${i}-${i < current ? 'incorrect' : 'incomplete'}${i === current ? '-current' : ''}"></div></div>`,
+      ).join('');
+    const h = start(
+      khanDom({ withProgress: false }).replace(
+        '<div data-testid="content-library-footer">',
+        `<div data-testid="content-library-footer">
+           <a title="Show all exercise progress">${cells(2)}</a>
+           <div data-testid="progress-wrapper">${cells(2)}</div>`,
+      ),
+    );
+    expect(h.detector.getCurrentKey()).toBe('id:progress:3 of 10');
   });
 });
 
@@ -657,39 +360,12 @@ describe('QuestionDetector — DOM adapter', () => {
  * Regressions from live observation
  * ================================================================== */
 
-describe('REGRESSION — auxiliary content must not reset the timer (spec 2.4, 8.3)', () => {
-  let detector: QuestionDetector;
-  let events: DetectionEvent[];
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-  });
-
-  afterEach(() => {
-    detector?.stop();
-    vi.useRealTimers();
-    document.body.innerHTML = '';
-  });
-
-  const start = (html: string): void => {
-    document.body.innerHTML = html;
-    events = [];
-    detector = new QuestionDetector(
-      { onEvent: (e) => events.push(e) },
-      { debounceMs: 400, cooldownMs: 1200 },
-    );
-    detector.start();
-  };
-
-  it('hint expansion that grows the region 3.5 KB -> 23 KB is NOT a question change', () => {
+describe('REGRESSION - auxiliary content must not reset the timer (spec 2.4, 8.3)', () => {
+  it('hint expansion that grows the region 3.5 KB -> 23 KB is NOT a question change', async () => {
     // Observed for real: after confirming "Yes, skip", all hints for the
     // current question expanded INSIDE form[name="answerform"], and the region
     // text grew from ~3.5 KB to ~23 KB while the progress index stayed put.
-    start(khanDom());
-
-    const form = document.querySelector('form[name="answerform"]');
-    expect(form).not.toBeNull();
+    const h = start(khanDom());
     const hints = document.createElement('div');
     hints.className = 'hints-container';
     hints.innerHTML = Array.from(
@@ -697,56 +373,98 @@ describe('REGRESSION — auxiliary content must not reset the timer (spec 2.4, 8
       (_, i) =>
         `<div>Hint #${i + 1} ${i + 1}/4 Step ${i}: 608 + 251 = 859 with a long explanation of place value regrouping.</div>`,
     ).join('');
-    form?.appendChild(hints);
-
+    document.querySelector('form[name="answerform"]')?.appendChild(hints);
+    await settle();
     vi.setSystemTime(T0 + 15_000);
-    detector.reevaluate('hints-open');
-    expect(events[events.length - 1]).toMatchObject({ type: 'same-question' });
-
-    // And again a moment later, to be sure nothing settles into a switch.
-    vi.setSystemTime(T0 + 20_000);
-    detector.reevaluate('hints-settled');
-    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
+    h.detector.reevaluate('hints-open');
+    expect(h.last()).toMatchObject({ type: 'same-question' });
+    expect(h.changes()).toHaveLength(1);
   });
 
-  it('an incorrect-answer popover is NOT a question change', () => {
-    start(khanDom());
+  it('an incorrect-answer popover is NOT a question change', async () => {
+    const h = start(khanDom());
     const dialog = document.createElement('div');
     dialog.setAttribute('role', 'dialog');
     dialog.innerHTML = '<h4>Not quite yet...</h4><span>Give it another try!</span>';
     document.querySelector('form[name="answerform"]')?.appendChild(dialog);
-
-    vi.setSystemTime(T0 + 6000);
-    detector.reevaluate('feedback-shown');
-    expect(events[events.length - 1]).toMatchObject({ type: 'same-question' });
+    await settle();
+    h.detector.reevaluate('feedback-shown');
+    expect(h.last()).toMatchObject({ type: 'same-question' });
+    expect(h.changes()).toHaveLength(1);
   });
 
-  it('the fallback fingerprint ignores feedback text when there is no progress marker', () => {
-    start(khanDom({ withProgress: false }));
-    const keyBefore = detector.getCurrentKey();
-    expect(keyBefore?.startsWith('fp:')).toBe(true);
-
-    // Feedback arrives inside the region (worst case) with no progress marker.
-    const dialog = document.createElement('div');
-    dialog.setAttribute('role', 'dialog');
-    dialog.innerHTML = '<h4>There you go!</h4><span>Keep it up!</span>';
-    document.querySelector('form[name="answerform"]')?.appendChild(dialog);
-
-    vi.setSystemTime(T0 + 6000);
-    detector.reevaluate('feedback-fingerprint-path');
-    expect(events[events.length - 1]).toMatchObject({ type: 'same-question' });
-    expect(detector.getCurrentKey()).toBe(keyBefore);
-  });
-
-  it('typing an answer into the widget is NOT a question change', () => {
-    start(khanDom());
+  it('typing an answer into the widget is NOT a question change', async () => {
+    const h = start(khanDom());
     const input = document.querySelector<HTMLInputElement>('[data-testid="input-with-examples"]');
-    expect(input).not.toBeNull();
     if (input) input.value = '859';
+    await settle();
+    h.detector.reevaluate('answer-typed');
+    expect(h.last()).toMatchObject({ type: 'same-question' });
+    expect(h.changes()).toHaveLength(1);
+  });
 
-    vi.setSystemTime(T0 + 4000);
-    detector.reevaluate('answer-typed');
-    expect(events[events.length - 1]).toMatchObject({ type: 'same-question' });
+  it('submitting an answer moves the state word only: NOT a question change', async () => {
+    const h = start(khanDom());
+    setCurrentState('incorrect');
+    await settle();
+    expect(h.changes()).toHaveLength(1);
+    expect(h.detector.getCurrentKey()).toBe('id:progress:1 of 4');
+  });
+});
+
+/* ================================================================== *
+ * Progress STATE changes (same question, different state word)
+ * ================================================================== */
+
+describe('QuestionDetector - progress state changes', () => {
+  it('does not report a change for the first observation (baseline only)', () => {
+    expect(start(khanDom()).stateChanges).toHaveLength(0);
+  });
+
+  it('reports an answered-correct state change on the same question', async () => {
+    const h = start(khanDom());
+    setCurrentState('correct');
+    await settle();
+    expect(h.stateChanges).toEqual([{ state: 'correct', previous: 'incomplete', index: 0 }]);
+  });
+
+  it('reports an incorrect state change (wrong answer) on the same question', async () => {
+    const h = start(khanDom());
+    setCurrentState('incorrect');
+    await settle();
+    expect(h.stateChanges).toEqual([{ state: 'incorrect', previous: 'incomplete', index: 0 }]);
+  });
+
+  it('reports each state transition once, however often the page is read', async () => {
+    const h = start(khanDom());
+    setCurrentState('correct');
+    await settle();
+    h.detector.reevaluate('again-1');
+    h.detector.reevaluate('again-2');
+    await settle(5000);
+    expect(h.stateChanges).toHaveLength(1);
+  });
+
+  it('picks up a footer that renders after the question area', async () => {
+    // On a real page load the footer holding the progress marker can come
+    // after the question area. The first reading is then a baseline, and the
+    // later state change must still be reported.
+    const h = start(khanDom({ withProgress: false }));
+    document.body.innerHTML = khanDom({ progressIndex: 0 });
+    await settle();
+    expect(h.stateChanges).toHaveLength(0);
+    setCurrentState('correct');
+    await settle();
+    expect(h.stateChanges).toEqual([{ state: 'correct', previous: 'incomplete', index: 0 }]);
+  });
+
+  it('does not report a state change when the question INDEX moves', async () => {
+    // The new question's "incomplete" is a new baseline, not a state change.
+    const h = start(khanDom());
+    advanceMarker(0, 1);
+    await settle();
+    expect(h.changes()).toHaveLength(2);
+    expect(h.stateChanges).toHaveLength(0);
   });
 });
 
@@ -852,145 +570,6 @@ describe('site-profile: exerciseKeyFromUrl', () => {
 
   it('does not throw on an unparseable URL', () => {
     expect(exerciseKeyFromUrl('not a url')).toBe('not a url');
-  });
-});
-
-/* ================================================================== *
- * Progress STATE changes (same question, different state word)
- * ================================================================== */
-
-describe('QuestionDetector — progress state changes', () => {
-  let detector: QuestionDetector;
-  let events: DetectionEvent[];
-  let stateChanges: { state: string; previous: string | null; index: number }[];
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(T0);
-    document.body.innerHTML = khanDom({ progressIndex: 0, progressState: 'incomplete' });
-    events = [];
-    stateChanges = [];
-    detector = new QuestionDetector(
-      {
-        onEvent: (event) => events.push(event),
-        onProgressStateChange: (change) =>
-          stateChanges.push({ state: change.state, previous: change.previous, index: change.index }),
-      },
-      { debounceMs: 400, cooldownMs: 1200 },
-    );
-    detector.start();
-  });
-
-  afterEach(() => {
-    detector?.stop();
-    vi.useRealTimers();
-    document.body.innerHTML = '';
-  });
-
-  const setCurrentState = (state: string): void => {
-    document
-      .querySelector('[data-testid$="-current"]')
-      ?.setAttribute('data-testid', `exercise-progress-0-${state}-current`);
-  };
-
-  it('does not report a change for the first observation (baseline only)', () => {
-    expect(stateChanges).toHaveLength(0);
-  });
-
-  it('attaches the progress observer even when the footer appears late', () => {
-    // REGRESSION: on a real page load the exercise footer (which holds the
-    // progress marker) appears AFTER the question region. The observer was only
-    // bound when something detached, so it was never created and answer/skip
-    // state changes were missed.
-    detector.stop();
-    document.body.innerHTML = `
-      <div data-testid="content-panel-wrapper">
-        <div class="framework-perseus"><form name="answerform">
-          <div class="perseus-renderer"><div class="paragraph" data-perseus-paragraph-index="0">Add. 1+1</div></div>
-        </form></div>
-      </div>`;
-    events = [];
-    stateChanges = [];
-    detector = new QuestionDetector(
-      {
-        onEvent: (event) => events.push(event),
-        onProgressStateChange: (change) =>
-          stateChanges.push({ state: change.state, previous: change.previous, index: change.index }),
-      },
-      { debounceMs: 400, cooldownMs: 1200 },
-    );
-    detector.start();
-    // No footer yet: nothing to read, and no crash.
-    expect(events.length).toBeGreaterThan(0);
-
-    // The footer renders a moment later, as it does on the real site.
-    const footer = document.createElement('div');
-    footer.setAttribute('data-testid', 'content-library-footer');
-    footer.innerHTML = `
-      <div><div data-testid="exercise-progress-0-incomplete-current"></div></div>
-      <div><div data-testid="exercise-progress-1-incomplete"></div></div>`;
-    document.querySelector('[data-testid="content-panel-wrapper"]')?.append(footer);
-
-    // The poll interval must notice and bind the observer.
-    vi.advanceTimersByTime(700);
-    expect(stateChanges).toHaveLength(0); // baseline only, no spurious change
-
-    // Now a state change on the same question must be reported.
-    document
-      .querySelector('[data-testid$="-current"]')
-      ?.setAttribute('data-testid', 'exercise-progress-0-correct-current');
-    vi.advanceTimersByTime(1400);
-    expect(stateChanges).toEqual([{ state: 'correct', previous: 'incomplete', index: 0 }]);
-  });
-
-  it('reports an answered-correct state change on the same question', () => {
-    setCurrentState('correct');
-    vi.setSystemTime(T0 + 3000);
-    detector.reevaluate('after-answer');
-    expect(stateChanges).toEqual([{ state: 'correct', previous: 'incomplete', index: 0 }]);
-  });
-
-  it('reports an incorrect state change (wrong answer) on the same question', () => {
-    setCurrentState('incorrect');
-    vi.setSystemTime(T0 + 3000);
-    detector.reevaluate('after-wrong-answer');
-    expect(stateChanges).toEqual([{ state: 'incorrect', previous: 'incomplete', index: 0 }]);
-  });
-
-  it('does not report a state change when the state is unchanged', () => {
-    vi.setSystemTime(T0 + 1000);
-    detector.reevaluate('no-change');
-    vi.setSystemTime(T0 + 2000);
-    detector.reevaluate('still-no-change');
-    expect(stateChanges).toHaveLength(0);
-  });
-
-  it('reports each state transition once, not once per evaluation', () => {
-    setCurrentState('correct');
-    vi.setSystemTime(T0 + 3000);
-    detector.reevaluate('answer-1');
-    vi.setSystemTime(T0 + 3500);
-    detector.reevaluate('answer-2');
-    vi.setSystemTime(T0 + 4000);
-    detector.reevaluate('answer-3');
-    expect(stateChanges).toHaveLength(1);
-  });
-
-  it('does not report a state change when the question INDEX moves', () => {
-    // Advance: index 0 -> 1. The state word also flips back to "incomplete",
-    // which must be treated as a new baseline, not a state change.
-    document
-      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
-      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
-    document
-      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
-      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
-    vi.setSystemTime(T0 + 10_000);
-    detector.reevaluate('advance-seen');
-    vi.setSystemTime(T0 + 10_500);
-    detector.reevaluate('advance-confirmed');
-    expect(events.some((e) => e.type === 'question-changed')).toBe(true);
-    expect(stateChanges).toHaveLength(0);
   });
 });
 
