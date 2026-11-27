@@ -109,19 +109,13 @@ describe('record writes under any interleaving', () => {
   });
 
   /**
-   * KNOWN BUG - records are lost across tabs.
-   *
-   * `createRecordQueue` serialises the read-modify-write of the shared
-   * `records` key within ONE content script. Every tab has its own controller
-   * and therefore its own queue, so two tabs finishing a question at about the
-   * same time both read the old list and the second `set` overwrites the
-   * first: one question disappears from the end-of-exercise card.
-   *
-   * fast-check finds it immediately (tab A get, tab B get, A set, B set). Fix
-   * by removing the shared read-modify-write, e.g. one storage key per record,
-   * then change `it.fails` to `it`.
+   * Regression: every tab has its own controller and therefore its own queue.
+   * While records shared one `records` list, two tabs finishing a question at
+   * about the same time both read the old list and the second `set` dropped
+   * the first record (fast-check: tab A get, tab B get, A set, B set). Records
+   * now have one key each (`RECORD_KEY_PREFIX`).
    */
-  it.fails('two tabs: a record written by each tab at the same time is kept', async () => {
+  it('two tabs: a record written by each tab at the same time is kept', async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.scheduler(),
@@ -149,13 +143,12 @@ describe('record writes under any interleaving', () => {
   });
 
   /**
-   * KNOWN BUG - "Clear records" in the popup can be undone by a tab.
-   *
-   * Same root cause as above: a tab that read the list just before the popup
-   * removed it writes the old list back, plus its new record. The learner
-   * pressed Clear and the old history reappears.
+   * Regression, same root cause: a tab that read the shared list just before
+   * the popup removed it wrote the old list back with its new record, so the
+   * cleared history reappeared. `old` is seeded in the legacy list on purpose:
+   * that path must not resurrect it either.
    */
-  it.fails('a tab writing while the popup clears never brings cleared records back', async () => {
+  it('a tab writing while the popup clears never brings cleared records back', async () => {
     await fc.assert(
       fc.asyncProperty(fc.scheduler(), async (s) => {
         const backing = new MemoryArea();

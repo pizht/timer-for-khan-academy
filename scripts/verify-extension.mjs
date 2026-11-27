@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
+import { STORED_RECORDS_FN } from './lib/stored-records.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -1077,14 +1078,14 @@ async function main() {
         return {
           hasChromeStorage: typeof chrome !== 'undefined' && !!chrome.storage,
           settings: all.settings || null,
-          recordCount: (all.records && all.records.records ? all.records.records.length : 0),
+          recordCount: (${STORED_RECORDS_FN})(all).length,
           renderedStatus: (document.getElementById('status-text') || {}).textContent || null,
           renderedRecordCount: (document.getElementById('record-count') || {}).textContent || null,
           modeSelect: !!document.getElementById('defaultMode'),
           limitInput: !!document.getElementById('countdownLimitSeconds'),
           soundToggle: !!document.getElementById('soundEnabled'),
           clearButton: !!document.getElementById('clear-records'),
-          records: (all.records && all.records.records ? all.records.records : []).map((r) => ({
+          records: (${STORED_RECORDS_FN})(all).map((r) => ({
             runId: r.runId,
             questionIndex: r.questionIndex,
             durationMs: r.durationMs,
@@ -1374,7 +1375,7 @@ async function main() {
         document.getElementById('clear-records').click();
         await new Promise((r) => setTimeout(r, 800));
         const all = await chrome.storage.local.get(null);
-        return { recordCount: (all.records && all.records.records ? all.records.records.length : 0),
+        return { recordCount: (${STORED_RECORDS_FN})(all).length,
                  rendered: (document.getElementById('record-count') || {}).textContent };
       })()`);
       check(

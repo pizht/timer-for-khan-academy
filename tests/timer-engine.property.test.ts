@@ -30,12 +30,6 @@ interface Model {
   pausedMs: number;
   /** The learner (not the extension) pressed Pause since the last reset. */
   sawPause: boolean;
-  /**
-   * A reload happened since the last reset. `sawPause` is not persisted across
-   * a reload (KNOWN BUG, see the `it.fails` below), so the main property only
-   * checks it until the first reload.
-   */
-  reloaded: boolean;
   /** A beep was already emitted for the current expiry. */
   beeped: boolean;
   submission: { at: number; outcome: FirstSubmissionOutcome } | null;
@@ -56,7 +50,7 @@ function checkAgainstModel(m: Model, r: Real): void {
   expect(engine.elapsedMs(m.now)).toBe(m.elapsedMs);
   expect(engine.totalPausedMs(m.now)).toBe(m.pausedMs);
   expect(engine.getFirstSubmission()).toEqual(m.submission);
-  if (!m.reloaded) expect(engine.hasSeenPause()).toBe(m.sawPause);
+  expect(engine.hasSeenPause()).toBe(m.sawPause);
 
   const snap = engine.snapshot(m.now);
   expect(snap.elapsedMs).toBeGreaterThanOrEqual(0);
@@ -128,7 +122,6 @@ class Reset implements Cmd {
     m.elapsedMs = 0;
     m.pausedMs = 0;
     m.sawPause = false;
-    m.reloaded = false;
     m.beeped = false;
     m.submission = null;
     checkAgainstModel(m, r);
@@ -232,7 +225,6 @@ class Reload implements Cmd {
     r.engine = TimerEngine.restore(session!, m.now);
     // A question left idle (reset without restart) comes back counting.
     if (m.phase === 'idle') m.phase = 'running';
-    m.reloaded = true;
     checkAgainstModel(m, r);
   }
   toString = (): string => `reload(gap=${this.gap})`;
@@ -287,7 +279,6 @@ describe('TimerEngine - model-based properties', () => {
           elapsedMs: 0,
           pausedMs: 0,
           sawPause: false,
-          reloaded: false,
           beeped: false,
           submission: null,
         };
@@ -298,19 +289,14 @@ describe('TimerEngine - model-based properties', () => {
   });
 });
 
-describe('TimerEngine - known bugs found by the properties above', () => {
+describe('TimerEngine - regressions found by the properties above', () => {
   /**
-   * KNOWN BUG. `wasPaused` on a record means "the learner pressed Pause on this
-   * question", but `sawPause` is not part of `TimerSerialized`, so a reload (or
-   * leaving and coming back to the practice) forgets it and the record says the
-   * question was never paused. Minimal counterexample found by fast-check:
-   * `pause(learner), reload(gap=0)`.
-   *
-   * `it.fails` keeps the suite green while the bug exists and turns RED once it
-   * is fixed - then change this to `it` and drop the `reloaded` escape hatch in
-   * the model.
+   * Found by the model test: `wasPaused` on a record means "the learner pressed
+   * Pause on this question", but it used to be left out of `TimerSerialized`,
+   * so a reload (or leaving the practice and coming back) forgot it.
+   * Minimal counterexample: `pause(learner), reload(gap=0)`.
    */
-  it.fails('remembers that the learner paused the question across a reload', () => {
+  it('remembers that the learner paused the question across a reload', () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 600_000 }), (gap) => {
         const engine = new TimerEngine({

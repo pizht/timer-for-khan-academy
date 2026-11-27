@@ -39,6 +39,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
+import { storedRecords } from './lib/stored-records.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -947,7 +948,7 @@ async function main() {
     }
 
     const stored = await readStored();
-    const records = Array.isArray(stored?.records?.records) ? stored.records.records : [];
+    const records = storedRecords(stored ?? {});
     const byExercise = records.reduce((acc, record) => {
       const key = (record.exerciseKey || '').split('/e/')[1] ?? record.exerciseKey;
       (acc[key] ??= []).push(record);

@@ -96,6 +96,12 @@ export interface TimerSerialized {
   expiredAt: number | null;
   firstSubmissionAt: number | null;
   firstSubmissionOutcome: FirstSubmissionOutcome | null;
+  /**
+   * The learner pressed Pause on this question (not an automatic freeze). It
+   * becomes the record's `wasPaused`, so it has to survive a reload too.
+   * Sessions saved by older versions lack it and read as false.
+   */
+  wasPaused: boolean;
   /** Wall clock of the last checkpoint write, for diagnostics. */
   savedAt: number;
 }
